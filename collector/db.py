@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 import psycopg2
 import psycopg2.extensions
@@ -165,3 +167,171 @@ def update_wallet_aggregates(
             """,
             (amount_wei, timestamp, timestamp, receiver_wallet_id),
         )
+
+
+# ======================================================================
+#  Rule Engine: правила, оценки риска, алерты
+# ======================================================================
+
+@dataclass(frozen=True)
+class Rule:
+    id: int
+    name: str
+    description: str | None
+    score: Decimal
+
+
+def get_active_rules(conn) -> list[Rule]:
+    """Все включённые правила (is_active = TRUE) из таблицы rule."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, name, description, score FROM rule "
+            "WHERE is_active = TRUE ORDER BY id"
+        )
+        return [Rule(r[0], r[1], r[2], r[3]) for r in cur.fetchall()]
+
+
+def ensure_rule(conn, name: str, description: str, score: Decimal) -> None:
+    """Идемпотентно создать/включить правило (rule.name уникален).
+
+    Используется для демо-правила «Большая сумма (тест)»: гарантирует, что
+    оно есть в БД и активно, чтобы движок его подхватил.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO rule (name, description, score, is_active)
+            VALUES (%s, %s, %s, TRUE)
+            ON CONFLICT (name) DO UPDATE
+               SET description = EXCLUDED.description,
+                   score       = EXCLUDED.score,
+                   is_active   = TRUE
+            """,
+            (name, description, score),
+        )
+    conn.commit()
+
+
+def get_transactions_for_scoring(conn) -> list[tuple]:
+    """Транзакции вместе с метками кошельков-участников (для правил уровня tx).
+
+    Возвращает кортежи (tx_id, amount, sender_label, receiver_label).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT t.id, t.amount, sw.label, rw.label
+            FROM tx t
+            JOIN wallet sw ON sw.id = t.sender_wallet_id
+            JOIN wallet rw ON rw.id = t.receiver_wallet_id
+            ORDER BY t.id
+            """
+        )
+        return cur.fetchall()
+
+
+def get_wallets_for_scoring(conn) -> list[tuple]:
+    """Кошельки (id, address, first_seen_at, label) для правил уровня кошелька."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, address, first_seen_at, label FROM wallet ORDER BY id"
+        )
+        return cur.fetchall()
+
+
+def get_wallet_tx_history(conn, wallet_id: int) -> list[tuple]:
+    """История (timestamp, amount) транзакций кошелька — как отправителя и получателя."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT transaction_timestamp, amount
+            FROM tx
+            WHERE sender_wallet_id = %s OR receiver_wallet_id = %s
+            ORDER BY transaction_timestamp
+            """,
+            (wallet_id, wallet_id),
+        )
+        return cur.fetchall()
+
+
+def insert_transaction_risk(
+    conn, *, transaction_id: int, rule_score: Decimal,
+    ml_score: Decimal, final_score: Decimal, risk_level: str,
+) -> int:
+    """Записать новую оценку риска транзакции (история — не перезаписываем старые)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO transaction_risk
+                (transaction_id, rule_score, ml_score, final_score, risk_level)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (transaction_id, rule_score, ml_score, final_score, risk_level),
+        )
+        return cur.fetchone()[0]
+
+
+def insert_wallet_risk(
+    conn, *, wallet_id: int, rule_score: Decimal,
+    ml_score: Decimal, final_score: Decimal, risk_level: str,
+) -> int:
+    """Записать новую оценку риска кошелька (история)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO wallet_risk
+                (wallet_id, rule_score, ml_score, final_score, risk_level)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (wallet_id, rule_score, ml_score, final_score, risk_level),
+        )
+        return cur.fetchone()[0]
+
+
+def update_wallet_risk_summary(
+    conn, *, wallet_id: int, risk_score: Decimal, is_flagged: bool
+) -> None:
+    """Обновить агрегированный риск кошелька (risk_score, is_flagged)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE wallet SET risk_score = %s, is_flagged = %s, updated_at = now() "
+            "WHERE id = %s",
+            (risk_score, is_flagged, wallet_id),
+        )
+
+
+def insert_alert(
+    conn, *, target_type: str, title: str, description: str, level: str,
+    transaction_risk_id: int | None = None, wallet_risk_id: int | None = None,
+) -> int:
+    """Создать алерт, ссылающийся ровно на один источник риска (CHECK в схеме)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO alert
+                (transaction_risk_id, wallet_risk_id, target_type,
+                 title, description, level, status)
+            VALUES (%s, %s, %s, %s, %s, %s, 'open')
+            RETURNING id
+            """,
+            (transaction_risk_id, wallet_risk_id, target_type,
+             title, description, level),
+        )
+        return cur.fetchone()[0]
+
+
+def get_sample_alerts(conn, limit: int = 5) -> list[tuple]:
+    """Несколько свежих открытых алертов для вывода в отчёте."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT target_type, level, status, title, description, created_at
+            FROM alert
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        return cur.fetchall()
