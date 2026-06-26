@@ -1,5 +1,6 @@
 # Секреты — НИКОГДА не коммитить (API-ключ Etherscan и т.п.)
 .env
+.env.example
 .env.*
 *.key
 secrets/

@@ -1,0 +1,4 @@
+# Слой сбора данных из Ethereum
+requests>=2.31         # HTTP-запросы к Etherscan API
+psycopg2-binary>=2.9   # драйвер PostgreSQL
+python-dotenv>=1.0     # загрузка конфигурации из .env
