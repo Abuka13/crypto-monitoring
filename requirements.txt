@@ -1,4 +1,12 @@
 # Слой сбора данных из Ethereum
 requests>=2.31         # HTTP-запросы к Etherscan API
-psycopg2-binary>=2.9   # драйвер PostgreSQL
+psycopg2-binary>=2.9   # драйвер PostgreSQL (используется и сбором, и Django)
 python-dotenv>=1.0     # загрузка конфигурации из .env
+
+# REST API для интерфейса аналитика (Шаг 5) — отдельная точка входа (Django)
+Django>=5.1            # веб-фреймворк
+djangorestframework>=3.15  # REST API
+django-cors-headers>=4.3   # CORS для React-фронтенда
+drf-spectacular>=0.27      # авто-схема OpenAPI + /api/docs/
+django-filter>=24.1        # фильтры по query-параметрам
+dj-database-url>=2.1       # разбор DATABASE_URL из .env
