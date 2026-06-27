@@ -322,6 +322,38 @@ def insert_alert(
         return cur.fetchone()[0]
 
 
+# Таблицы с собранными/посчитанными данными. Справочники blockchain_network
+# и rule сюда НЕ входят — они сохраняются при очистке.
+_DATA_TABLES = ("alert", "transaction_risk", "wallet_risk", "tx", "wallet")
+
+
+def count_data_tables(conn) -> dict[str, int]:
+    """Сколько строк сейчас в очищаемых таблицах (для предпросмотра)."""
+    counts: dict[str, int] = {}
+    with conn.cursor() as cur:
+        for table in _DATA_TABLES:
+            cur.execute(f"SELECT count(*) FROM {table}")
+            counts[table] = cur.fetchone()[0]
+    return counts
+
+
+def reset_data(conn) -> dict[str, int]:
+    """Очистить таблицы данных, сохранив справочники (blockchain_network, rule).
+
+    TRUNCATE ... RESTART IDENTITY CASCADE: разом чистит wallet/tx/оценки/алерты
+    и сбрасывает счётчики id. blockchain_network и rule не трогаются.
+    Возвращает, сколько строк было удалено из каждой таблицы.
+    """
+    deleted = count_data_tables(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "TRUNCATE TABLE alert, transaction_risk, wallet_risk, tx, wallet "
+            "RESTART IDENTITY CASCADE"
+        )
+    conn.commit()
+    return deleted
+
+
 def get_sample_alerts(conn, limit: int = 5) -> list[tuple]:
     """Несколько свежих открытых алертов для вывода в отчёте."""
     with conn.cursor() as cur:

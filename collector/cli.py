@@ -31,9 +31,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--score-risk", action="store_true",
         help="Рассчитать риск и сгенерировать алерты по уже собранным данным",
     )
+    group.add_argument(
+        "--reset-data", action="store_true",
+        help="Очистить данные (wallet/tx/оценки/алерты), сохранив справочники "
+             "blockchain_network и rule. Требует --yes для подтверждения.",
+    )
     parser.add_argument(
         "--max", type=int, default=None,
         help="Ограничить число транзакций (полезно на бесплатном ключе)",
+    )
+    parser.add_argument(
+        "--yes", action="store_true",
+        help="Подтвердить удаление для --reset-data без дополнительного запроса",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Подробный лог"
@@ -80,6 +89,28 @@ def _run_score_risk(conn, config) -> int:
     return 0
 
 
+def _run_reset(conn, assume_yes: bool) -> int:
+    counts = db.count_data_tables(conn)
+    total = sum(counts.values())
+    summary = ", ".join(f"{t}={n}" for t, n in counts.items())
+
+    if total == 0:
+        print("Таблицы данных уже пусты — удалять нечего.")
+        return 0
+
+    if not assume_yes:
+        print("Будут удалены данные (справочники blockchain_network и rule сохранятся):")
+        print(f"  {summary}")
+        print("\nЭто необратимо. Повтори команду с флагом --yes, чтобы удалить:")
+        print("  python -m collector --reset-data --yes")
+        return 1
+
+    deleted = db.reset_data(conn)
+    print("Данные удалены (справочники сохранены):")
+    print("  " + ", ".join(f"{t}={n}" for t, n in deleted.items()))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     logging.basicConfig(
@@ -95,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
 
     conn = db.connect(config.database_url)
     try:
+        if args.reset_data:
+            return _run_reset(conn, args.yes)
         if args.score_risk:
             return _run_score_risk(conn, config)
         return _run_collect(conn, config, args)
