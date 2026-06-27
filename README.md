@@ -34,11 +34,47 @@
 - **Etherscan API** — получение транзакций Ethereum (через слой-адаптер, заменяемый на свой RPC-узел)
 - **Elliptic Dataset** — размеченный датасет для обучения модели
 
+## Запуск
+
+Подготовка (один раз):
+
+```bash
+python -m pip install -r requirements.txt
+cp .env.example .env   # затем впиши ETHERSCAN_API_KEY и DATABASE_URL
+```
+
+### Сбор данных и расчёт риска (CLI)
+
+```bash
+python -m collector --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --max 15
+python -m collector --score-risk        # расчёт риска + генерация алертов
+python -m collector --reset-data        # очистка данных (предпросмотр; --yes для удаления)
+```
+
+Полная шпаргалка команд — в [COMMANDS.md](COMMANDS.md).
+
+### REST API для интерфейса аналитика (Django)
+
+Отдельная точка входа, работает с той же базой. Подключается к существующим
+таблицам через модели с `managed = False` (Django их не создаёт и не меняет).
+
+```bash
+python manage.py migrate     # создаёт ТОЛЬКО служебные таблицы Django
+python manage.py runserver   # http://localhost:8000
+```
+
+- Документация API (Swagger UI): **http://localhost:8000/api/docs/**
+- OpenAPI-схема: http://localhost:8000/api/schema/
+- Описание эндпоинтов с примерами: [docs/api.md](docs/api.md)
+
 ## Документация
 
 - [Доменная модель](docs/domain_model.md)
+- [Архитектура системы](docs/architecture.md)
 - [ER-диаграмма](docs/er_diagram.svg)
+- [REST API (Шаг 5)](docs/api.md)
 
 ## Статус
 
-В разработке. Первый этап: проектирование архитектуры и базы данных, сбор данных из Ethereum.
+В разработке. Реализовано: сбор данных из Ethereum, Rule Engine (расчёт риска и
+алерты), REST API интерфейса аналитика. Дальше — фронтенд (React) и модуль ИИ.
