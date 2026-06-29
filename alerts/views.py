@@ -93,6 +93,53 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(AlertDetailSerializer(alert).data)
 
 
+@extend_schema(tags=["wallets"])
+class WalletViewSet(viewsets.ReadOnlyModelViewSet):
+    """Кошельки (только чтение). Фильтры: is_flagged."""
+
+    queryset = Wallet.objects.all().order_by("-risk_score", "id")
+    serializer_class = WalletSerializer
+    filterset_fields = ["is_flagged", "label"]
+    ordering_fields = ["risk_score", "transaction_count"]
+    pagination_class = None  # данных немного — отдаём полным списком
+
+
+@extend_schema(tags=["transactions"])
+class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
+    """Транзакции (только чтение)."""
+
+    queryset = (
+        Tx.objects.select_related("sender_wallet", "receiver_wallet")
+        .all()
+        .order_by("-transaction_timestamp", "-id")
+    )
+    serializer_class = TransactionSerializer
+    filterset_fields = ["status"]
+    pagination_class = None
+
+
+@extend_schema(tags=["rules"])
+class RuleViewSet(viewsets.ReadOnlyModelViewSet):
+    """Правила Rule Engine: список + включение/выключение (PATCH is_active)."""
+
+    queryset = Rule.objects.all().order_by("id")
+    serializer_class = RuleSerializer
+    pagination_class = None
+
+    @extend_schema(request=RuleToggleSerializer, responses={200: RuleSerializer})
+    def partial_update(self, request, pk=None):
+        rule = self.get_object()
+        body = RuleToggleSerializer(data=request.data)
+        if not body.is_valid():
+            return Response(
+                {"detail": "Передай поле is_active (true/false).", "errors": body.errors},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        rule.is_active = body.validated_data["is_active"]
+        rule.save(update_fields=["is_active"])
+        return Response(RuleSerializer(rule).data)
+
+
 @extend_schema(
     tags=["stats"],
     responses=OpenApiResponse(
