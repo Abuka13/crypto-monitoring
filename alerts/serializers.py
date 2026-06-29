@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import Alert
+from .models import Alert, Rule, Tx, Wallet
 from .transitions import VALID_STATUSES
 
 # Префикс, которым Rule Engine начинает описание (collector/risk/engine.py).
@@ -127,3 +127,70 @@ class StatusUpdateSerializer(serializers.Serializer):
     """Тело запроса PATCH /api/alerts/{id}/status/."""
 
     status = serializers.ChoiceField(choices=sorted(VALID_STATUSES))
+
+
+class WalletSerializer(serializers.ModelSerializer):
+    """Кошелёк для страницы «Кошельки». Суммы (wei) — строками, риск — числом."""
+
+    total_received = serializers.SerializerMethodField()
+    total_sent = serializers.SerializerMethodField()
+    risk_score = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Wallet
+        fields = [
+            "id", "address", "label", "transaction_count",
+            "total_received", "total_sent", "risk_score", "is_flagged",
+            "first_seen_at", "last_seen_at",
+        ]
+
+    def get_total_received(self, obj: Wallet) -> str:
+        return _wei(obj.total_received)
+
+    def get_total_sent(self, obj: Wallet) -> str:
+        return _wei(obj.total_sent)
+
+    def get_risk_score(self, obj: Wallet) -> float:
+        return float(obj.risk_score)
+
+
+class TransactionSerializer(serializers.ModelSerializer):
+    """Транзакция для страницы «Транзакции». amount (wei) — строкой."""
+
+    amount = serializers.SerializerMethodField()
+    gas_fee = serializers.SerializerMethodField()
+    sender_address = serializers.CharField(source="sender_wallet.address", read_only=True)
+    receiver_address = serializers.CharField(source="receiver_wallet.address", read_only=True)
+
+    class Meta:
+        model = Tx
+        fields = [
+            "id", "tx_hash", "sender_address", "receiver_address",
+            "amount", "gas_fee", "block_number", "transaction_timestamp",
+            "status", "currency",
+        ]
+
+    def get_amount(self, obj: Tx) -> str:
+        return _wei(obj.amount)
+
+    def get_gas_fee(self, obj: Tx) -> str:
+        return _wei(obj.gas_fee)
+
+
+class RuleSerializer(serializers.ModelSerializer):
+    """Правило Rule Engine. score — числом; is_active редактируется через PATCH."""
+
+    score = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Rule
+        fields = ["id", "name", "description", "score", "is_active"]
+
+    def get_score(self, obj: Rule) -> float:
+        return float(obj.score)
+
+
+class RuleToggleSerializer(serializers.Serializer):
+    """Тело PATCH /api/rules/{id}/ — включить/выключить правило."""
+
+    is_active = serializers.BooleanField()
