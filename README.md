@@ -63,6 +63,9 @@ python manage.py migrate     # создаёт ТОЛЬКО служебные т
 python manage.py runserver   # http://localhost:8000
 ```
 
+- **Интерфейс аналитика (SPA): http://localhost:8000/** — дашборд, алерты, кошельки,
+  транзакции, правила; тёмная/светлая тема, языки RU/KK/EN. Фронтенд в [frontend/index.html](frontend/index.html)
+  (React, без сборки), ходит на тот же API (один источник — без CORS-проблем).
 - Документация API (Swagger UI): **http://localhost:8000/api/docs/**
 - OpenAPI-схема: http://localhost:8000/api/schema/
 - Описание эндпоинтов с примерами: [docs/api.md](docs/api.md)
