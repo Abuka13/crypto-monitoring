@@ -1,0 +1,27 @@
+/* Глобальные стили и токены темы. Перенесены 1-в-1 из прежнего монолита,
+   внешний вид не меняется. Тема переключается атрибутом data-theme на корне. */
+:root{
+  --bg:#0a0a0c; --panel:#121317; --rail:#0d0d10; --card:#15161b; --card2:#1c1e25;
+  --border:rgba(255,255,255,.07); --border2:rgba(255,255,255,.04);
+  --text:#f3f4f6; --muted:#8b8f99; --muted2:#565a64;
+  --accent:#5fded0; --accent2:#36c9b5; --accent-soft:rgba(95,222,208,.13);
+  --shadow:0 18px 50px rgba(0,0,0,.55);
+}
+[data-theme="light"]{
+  --bg:#eef0f4; --panel:#ffffff; --rail:#ffffff; --card:#ffffff; --card2:#f4f6f9;
+  --border:rgba(15,23,42,.09); --border2:rgba(15,23,42,.05);
+  --text:#11151c; --muted:#5f6675; --muted2:#aab0bd;
+  --accent:#0fab9c; --accent2:#0c8c80; --accent-soft:rgba(15,171,156,.12);
+  --shadow:0 18px 44px rgba(15,23,42,.14);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;}
+#root{height:100%;}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;border:2px solid transparent;background-clip:padding-box;}
+::-webkit-scrollbar-thumb:hover{background:var(--muted2);}
+input::placeholder{color:var(--muted2);}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+@keyframes pulseDot{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.6);}}

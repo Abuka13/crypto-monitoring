@@ -1,0 +1,29 @@
+import { h } from './dom';
+
+export const ICONS = {
+  dashboard:['M3 3h7v7H3z','M14 3h7v7h-7z','M14 14h7v7h-7z','M3 14h7v7H3z'],
+  alerts:['M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9','M13.7 21a2 2 0 0 1-3.4 0'],
+  wallets:['M3 7a2 2 0 0 1 2-2h13v4','M3 7v10a2 2 0 0 0 2 2h15V7H3z','M16 12.5h0.01'],
+  transactions:['M17 1l4 4-4 4','M3 11V9a4 4 0 0 1 4-4h14','M7 23l-4-4 4-4','M21 13v2a4 4 0 0 1-4 4H3'],
+  rules:['M4 21v-7','M4 10V3','M12 21v-9','M12 8V3','M20 21v-5','M20 12V3','M1 14h6','M9 8h6','M17 16h6'],
+  search:['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z','M21 21l-4.3-4.3'],
+  sun:['M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z','M12 1v2','M12 21v2','M4.2 4.2l1.4 1.4','M18.4 18.4l1.4 1.4','M1 12h2','M21 12h2','M4.2 19.8l1.4-1.4','M18.4 5.6l1.4-1.4'],
+  moon:['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'],
+  copy:['M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z','M5 15a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1'],
+  chevronLeft:['M15 18l-6-6 6-6'],
+  chevronRight:['M9 18l6-6-6-6'],
+  menu:['M3 6h18','M3 12h18','M3 18h18'],
+  logout:['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4','M16 17l5-5-5-5','M21 12H9'],
+  close:['M18 6L6 18','M6 6l12 12'],
+  shield:['M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'],
+  bell:['M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9','M13.7 21a2 2 0 0 1-3.4 0'],
+  user:['M20 21a8 8 0 1 0-16 0','M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
+  flag:['M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z','M4 22v-7'],
+  lock:['M5 11h14v10H5z','M8 11V7a4 4 0 0 1 8 0v4'],
+};
+
+export function icon(name, size, sw){
+  const paths = ICONS[name] || [];
+  return h('svg', {width:size||20, height:size||20, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', strokeWidth:sw||1.8, strokeLinecap:'round', strokeLinejoin:'round'},
+    paths.map((d,i) => h('path', {key:i, d:d})));
+}

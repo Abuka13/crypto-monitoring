@@ -11,6 +11,7 @@ from django.contrib import admin
 from django.http import FileResponse, Http404
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from rest_framework.permissions import AllowAny
 
 _FRONTEND_INDEX = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
 
@@ -31,10 +32,11 @@ urlpatterns = [
     path("", spa_index, name="spa"),
     path("admin/", admin.site.urls),
     path("api/", include("alerts.urls")),
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    # Документация остаётся открытой (без токена), чтобы фронтенд-разработчики читали схему.
+    path("api/schema/", SpectacularAPIView.as_view(permission_classes=[AllowAny]), name="schema"),
     path(
         "api/docs/",
-        SpectacularSwaggerView.as_view(url_name="schema"),
+        SpectacularSwaggerView.as_view(url_name="schema", permission_classes=[AllowAny]),
         name="swagger-ui",
     ),
 ]

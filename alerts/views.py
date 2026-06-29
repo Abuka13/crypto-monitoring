@@ -93,6 +93,44 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(AlertDetailSerializer(alert).data)
 
 
+@extend_schema(
+    tags=["auth"],
+    responses=OpenApiResponse(
+        description="Текущий пользователь",
+        examples=[OpenApiExample("Пример", value={
+            "username": "analyst1", "first_name": "Иван", "last_name": "Петров",
+            "is_staff": False, "is_superuser": False,
+        })],
+    ),
+)
+@api_view(["GET"])
+def me_view(request):
+    """Данные текущего пользователя (по access-токену) — для шапки интерфейса."""
+    u = request.user
+    return Response({
+        "username": u.username,
+        "first_name": u.first_name,
+        "last_name": u.last_name,
+        "is_staff": u.is_staff,
+        "is_superuser": u.is_superuser,
+    })
+
+
+@extend_schema(tags=["auth"], request=None, responses={205: None})
+@api_view(["POST"])
+def logout_view(request):
+    """Выход: отзывает (blacklist) переданный refresh-токен. Тело: {"refresh": "..."}."""
+    from rest_framework_simplejwt.exceptions import TokenError
+    from rest_framework_simplejwt.tokens import RefreshToken
+    token_str = request.data.get("refresh")
+    if token_str:
+        try:
+            RefreshToken(token_str).blacklist()
+        except TokenError:
+            pass  # уже невалиден/отозван — выход всё равно успешен
+    return Response(status=http_status.HTTP_205_RESET_CONTENT)
+
+
 @extend_schema(tags=["wallets"])
 class WalletViewSet(viewsets.ReadOnlyModelViewSet):
     """Кошельки (только чтение). Фильтры: is_flagged."""

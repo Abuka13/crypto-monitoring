@@ -10,3 +10,4 @@ django-cors-headers>=4.3   # CORS для React-фронтенда
 drf-spectacular>=0.27      # авто-схема OpenAPI + /api/docs/
 django-filter>=24.1        # фильтры по query-параметрам
 dj-database-url>=2.1       # разбор DATABASE_URL из .env
+djangorestframework-simplejwt>=5.3  # JWT-аутентификация (вход/refresh/blacklist)

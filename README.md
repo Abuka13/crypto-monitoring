@@ -70,6 +70,34 @@ python manage.py runserver   # http://localhost:8000
 - OpenAPI-схема: http://localhost:8000/api/schema/
 - Описание эндпоинтов с примерами: [docs/api.md](docs/api.md)
 
+### Аутентификация (JWT)
+
+Весь API закрыт: без действующего access-токена эндпоинты отдают **401**.
+Токены выдаёт `djangorestframework-simplejwt`. Время жизни настраивается в `.env`
+(`JWT_ACCESS_MINUTES`, по умолчанию 45; `JWT_REFRESH_DAYS`, по умолчанию 1).
+
+Эндпоинты: `POST /api/auth/login/` (логин/пароль → access + refresh),
+`POST /api/auth/refresh/` (обновить access), `GET /api/auth/me/` (текущий пользователь),
+`POST /api/auth/logout/` (отзыв refresh-токена).
+
+**Заведение аналитиков — через Django Admin** (ролей нет, используется стандартная
+модель пользователя). Регистрации в интерфейсе нет — пользователей создаёт администратор:
+
+```bash
+python manage.py createsuperuser          # создать администратора (один раз)
+python manage.py runserver
+# открой http://localhost:8000/admin/ , войди суперпользователем,
+# раздел Users → Add user → задай логин и пароль аналитику
+```
+
+**Вход в интерфейс:** открой http://localhost:8000/ — пока нет токена показывается
+экран входа. После логина токены сохраняются в браузере (localStorage), все запросы
+идут с `Authorization: Bearer <access>`; протухший access автоматически обновляется
+через refresh, а кнопка выхода в боковом меню отзывает токен и возвращает на экран входа.
+
+> Для продакшена задай свой `DJANGO_SECRET_KEY` в `.env` (длиной ≥ 32 байта) — на нём
+> подписываются JWT. Дев-значение по умолчанию годится только для локальной разработки.
+
 ## Документация
 
 - [Доменная модель](docs/domain_model.md)

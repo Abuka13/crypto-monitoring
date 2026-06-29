@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -33,6 +34,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Сторонние
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",  # для logout (отзыв refresh-токена)
     "corsheaders",
     "django_filters",
     "drf_spectacular",
@@ -80,6 +82,13 @@ DATABASES = {"default": dj_database_url.parse(DATABASE_URL)}
 
 # --- DRF ---
 REST_FRAMEWORK = {
+    # Аутентификация по JWT; доступ — только аутентифицированным (логин/refresh открыты явно).
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
     # Пагинация по умолчанию: limit/offset (?limit=&offset=).
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 50,
@@ -90,6 +99,14 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     # NUMERIC -> строка в JSON (это важно для wei: JS теряет точность на больших числах).
     "COERCE_DECIMAL_TO_STRING": True,
+}
+
+# --- JWT (simplejwt). Время жизни токенов настраивается через .env. ---
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.getenv("JWT_ACCESS_MINUTES", "45"))),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.getenv("JWT_REFRESH_DAYS", "1"))),
+    "ROTATE_REFRESH_TOKENS": False,
+    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 SPECTACULAR_SETTINGS = {
