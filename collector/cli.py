@@ -66,6 +66,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="С какого блока начать слежение (для --follow; иначе — с текущей вершины)",
     )
     parser.add_argument(
+        "--score", action="store_true",
+        help="Вместе с --follow: после каждого блока считать риск и алерты по его данным",
+    )
+    parser.add_argument(
         "--yes", action="store_true",
         help="Подтвердить удаление для --reset-data без дополнительного запроса",
     )
@@ -83,6 +87,8 @@ def _run_follow(conn, config, args) -> int:
         poll_interval=args.poll_interval,
         max_blocks_per_cycle=args.max_blocks_per_cycle,
         from_block=args.from_block,
+        score=args.score,
+        risk_cfg=config.risk,
     )
 
 

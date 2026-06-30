@@ -40,11 +40,8 @@ class RiskConfig:
     (сами правила-условия живут в risk/rules.py).
     """
 
-    # «Большая сумма»: боевой порог (по умолчанию 10 ETH).
+    # «Большая сумма»: порог (по умолчанию 10 ETH).
     large_amount_threshold_wei: int
-    # «Большая сумма (тест)»: низкий порог для демо — заведомо срабатывает
-    # на части собранных транзакций, чтобы показать конвейер риск → алерт.
-    large_amount_test_threshold_wei: int
 
     # «Новый кошелёк»: создан не давнее N дней и при этом крупный оборот.
     new_wallet_max_age_days: int
@@ -62,9 +59,6 @@ class RiskConfig:
         return RiskConfig(
             large_amount_threshold_wei=int(
                 os.getenv("RISK_LARGE_AMOUNT_WEI", str(10 * ETH))
-            ),
-            large_amount_test_threshold_wei=int(
-                os.getenv("RISK_LARGE_AMOUNT_TEST_WEI", str(ETH // 10_000))  # 0.0001 ETH
             ),
             new_wallet_max_age_days=int(os.getenv("RISK_NEW_WALLET_MAX_AGE_DAYS", "30")),
             high_frequency_count=int(os.getenv("RISK_HIGH_FREQ_COUNT", "10")),

@@ -191,27 +191,6 @@ def get_active_rules(conn) -> list[Rule]:
         return [Rule(r[0], r[1], r[2], r[3]) for r in cur.fetchall()]
 
 
-def ensure_rule(conn, name: str, description: str, score: Decimal) -> None:
-    """Идемпотентно создать/включить правило (rule.name уникален).
-
-    Используется для демо-правила «Большая сумма (тест)»: гарантирует, что
-    оно есть в БД и активно, чтобы движок его подхватил.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO rule (name, description, score, is_active)
-            VALUES (%s, %s, %s, TRUE)
-            ON CONFLICT (name) DO UPDATE
-               SET description = EXCLUDED.description,
-                   score       = EXCLUDED.score,
-                   is_active   = TRUE
-            """,
-            (name, description, score),
-        )
-    conn.commit()
-
-
 def get_transactions_for_scoring(conn) -> list[tuple]:
     """Транзакции вместе с метками кошельков-участников (для правил уровня tx).
 
@@ -235,6 +214,51 @@ def get_wallets_for_scoring(conn) -> list[tuple]:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, address, first_seen_at, label FROM wallet ORDER BY id"
+        )
+        return cur.fetchall()
+
+
+# --- Инкрементальный расчёт: выборки только по одному блоку ---
+
+def get_transactions_for_scoring_by_block(conn, network_id: int, block_number: int) -> list[tuple]:
+    """Транзакции одного блока (id, amount, sender_label, receiver_label)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT t.id, t.amount, sw.label, rw.label
+            FROM tx t
+            JOIN wallet sw ON sw.id = t.sender_wallet_id
+            JOIN wallet rw ON rw.id = t.receiver_wallet_id
+            WHERE t.network_id = %s AND t.block_number = %s
+            ORDER BY t.id
+            """,
+            (network_id, block_number),
+        )
+        return cur.fetchall()
+
+
+def get_affected_wallet_ids_by_block(conn, network_id: int, block_number: int) -> list[int]:
+    """id кошельков, участвовавших в блоке (как отправители или получатели)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT sender_wallet_id FROM tx WHERE network_id = %s AND block_number = %s
+            UNION
+            SELECT receiver_wallet_id FROM tx WHERE network_id = %s AND block_number = %s
+            """,
+            (network_id, block_number, network_id, block_number),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def get_wallets_for_scoring_by_ids(conn, wallet_ids: list[int]) -> list[tuple]:
+    """Кошельки (id, address, first_seen_at, label) по списку id."""
+    if not wallet_ids:
+        return []
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, address, first_seen_at, label FROM wallet WHERE id = ANY(%s) ORDER BY id",
+            (list(wallet_ids),),
         )
         return cur.fetchall()
 

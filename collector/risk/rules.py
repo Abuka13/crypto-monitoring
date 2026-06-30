@@ -5,10 +5,6 @@
 - здесь живёт *условие* каждого правила (как именно проверять).
 Правило из БД связывается с условием по имени (реестры TX_RULES / WALLET_RULES).
 Так баллы и включение правил меняются в БД, а логика — в коде.
-
-Демо-правило «Большая сумма (тест)» намеренно имеет низкий порог, чтобы на уже
-собранных данных (адрес Виталика, 2015 г.) сработать и показать конвейер
-риск → алерт. Боевое «Большая сумма» использует высокий порог из конфига.
 """
 from __future__ import annotations
 
@@ -20,7 +16,6 @@ from ..config import RiskConfig
 
 # --- Имена правил (должны совпадать с rule.name в БД) ---
 RULE_LARGE_AMOUNT = "Большая сумма"
-RULE_LARGE_AMOUNT_TEST = "Большая сумма (тест)"
 RULE_MIXER = "Связь с миксером"
 RULE_NEW_WALLET = "Новый кошелёк"
 RULE_HIGH_FREQUENCY = "Высокая частота"
@@ -79,17 +74,12 @@ def _tx_large_amount(tx: TxFacts, cfg: RiskConfig) -> bool:
     return tx.amount_wei >= cfg.large_amount_threshold_wei
 
 
-def _tx_large_amount_test(tx: TxFacts, cfg: RiskConfig) -> bool:
-    return tx.amount_wei >= cfg.large_amount_test_threshold_wei
-
-
 def _tx_mixer(tx: TxFacts, cfg: RiskConfig) -> bool:
     return MIXER_LABEL in (tx.sender_label, tx.receiver_label)
 
 
 TX_RULES = {
     RULE_LARGE_AMOUNT: _tx_large_amount,
-    RULE_LARGE_AMOUNT_TEST: _tx_large_amount_test,
     RULE_MIXER: _tx_mixer,
 }
 

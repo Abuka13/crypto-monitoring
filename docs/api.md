@@ -62,11 +62,11 @@ GET /api/alerts/?status=open&level=high&limit=2
       "target_type": "transaction",
       "level": "high",
       "status": "open",
-      "title": "Рискованная транзакция: HIGH (60.00)",
-      "description": "Сработавшие правила: Большая сумма (тест) (+60.00)",
+      "title": "Рискованная транзакция: HIGH (70.00)",
+      "description": "Сработавшие правила: Большая сумма (+30.00); Связь с миксером (+40.00)",
       "created_at": "2026-06-27T15:40:34.706422Z",
       "resolved_at": null,
-      "final_score": 60.0
+      "final_score": 70.0
     }
   ]
 }
@@ -93,14 +93,15 @@ GET /api/alerts/13/
   "target_type": "transaction",
   "level": "high",
   "status": "open",
-  "title": "Рискованная транзакция: HIGH (60.00)",
-  "description": "Сработавшие правила: Большая сумма (тест) (+60.00)",
+  "title": "Рискованная транзакция: HIGH (70.00)",
+  "description": "Сработавшие правила: Большая сумма (+30.00); Связь с миксером (+40.00)",
   "created_at": "2026-06-27T15:40:34.706422Z",
   "resolved_at": null,
-  "final_score": 60.0,
+  "final_score": 70.0,
   "risk_level": "HIGH",
   "fired_rules": [
-    { "name": "Большая сумма (тест)", "score": 60.0 }
+    { "name": "Большая сумма", "score": 30.0 },
+    { "name": "Связь с миксером", "score": 40.0 }
   ],
   "context": {
     "tx_hash": "0x9b629147b75dc0b275d478fa34d97c5d4a26926457540b15a5ce871df36c23fd",

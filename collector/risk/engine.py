@@ -6,6 +6,11 @@
   - пишем НОВУЮ строку в transaction_risk / wallet_risk (история, не перезапись);
   - для кошелька обновляем wallet.risk_score и is_flagged;
   - при final_score >= HIGH (50) создаём alert с причиной из сработавших правил.
+
+Две точки входа:
+  - score_risk(conn, cfg)                  — пересчитать ВСЮ базу;
+  - score_block(conn, cfg, net, block)     — инкрементально, только данные блока
+                                             (для конвейера слежения --follow --score).
 """
 from __future__ import annotations
 
@@ -19,15 +24,6 @@ from . import rules
 from .rules import TxFacts, WalletFacts
 
 log = logging.getLogger(__name__)
-
-# Демо-правило: низкий порог, заведомо срабатывает на собранных данных и даёт
-# балл >= HIGH, чтобы показать весь конвейер риск → алерт. Балл 60 → уровень HIGH.
-_DEMO_RULE_NAME = rules.RULE_LARGE_AMOUNT_TEST
-_DEMO_RULE_SCORE = Decimal("60.00")
-_DEMO_RULE_DESCRIPTION = (
-    "ДЕМО: сумма превышает заниженный тестовый порог "
-    "(RISK_LARGE_AMOUNT_TEST_WEI) — для наглядной проверки конвейера риск → алерт"
-)
 
 
 @dataclass
@@ -56,34 +52,62 @@ def _reason(fired: list[tuple[str, Decimal]]) -> str:
     return "; ".join(f"{name} (+{score})" for name, score in fired)
 
 
-def score_risk(conn, cfg: RiskConfig) -> RiskStats:
-    stats = RiskStats()
-
-    # Гарантируем наличие демо-правила, затем берём ВСЕ активные правила из БД.
-    db.ensure_rule(conn, _DEMO_RULE_NAME, _DEMO_RULE_DESCRIPTION, _DEMO_RULE_SCORE)
+def _load_rules(conn, stats: RiskStats):
     active = db.get_active_rules(conn)
-
     tx_rules = [r for r in active if r.name in rules.TX_RULES]
     wallet_rules = [r for r in active if r.name in rules.WALLET_RULES]
     for r in active:
         if r.name not in rules.TX_RULES and r.name not in rules.WALLET_RULES:
-            stats.skipped_rules.append(r.name)
+            if r.name not in stats.skipped_rules:
+                stats.skipped_rules.append(r.name)
             log.warning("Для правила '%s' нет реализации условия — пропущено", r.name)
+    return tx_rules, wallet_rules
 
-    log.info(
-        "Активных правил: %d (tx=%d, wallet=%d)",
-        len(active), len(tx_rules), len(wallet_rules),
-    )
 
-    _score_transactions(conn, cfg, tx_rules, stats)
-    _score_wallets(conn, cfg, wallet_rules, stats)
+# ----------------------------------------------------------------------
+# Полный пересчёт по всей базе
+# ----------------------------------------------------------------------
+def score_risk(conn, cfg: RiskConfig) -> RiskStats:
+    stats = RiskStats()
+    tx_rules, wallet_rules = _load_rules(conn, stats)
+    log.info("Активных правил: tx=%d, wallet=%d", len(tx_rules), len(wallet_rules))
+
+    _score_transaction_rows(conn, cfg, tx_rules, db.get_transactions_for_scoring(conn), stats)
+    _score_wallet_rows(conn, cfg, wallet_rules, db.get_wallets_for_scoring(conn), stats)
 
     conn.commit()
     return stats
 
 
-def _score_transactions(conn, cfg, tx_rules, stats: RiskStats) -> None:
-    for tx_id, amount, sender_label, receiver_label in db.get_transactions_for_scoring(conn):
+# ----------------------------------------------------------------------
+# Инкрементальный пересчёт: только данные одного блока
+# ----------------------------------------------------------------------
+def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int) -> RiskStats:
+    """Оценить риск только по транзакциям блока и затронутым им кошелькам.
+
+    Не пересчитывает всю базу — поэтому пригоден для конвейера реального времени
+    (--follow --score). Кошельки оцениваются по своей полной истории, но в выборку
+    попадают лишь участники этого блока.
+    """
+    stats = RiskStats()
+    tx_rules, wallet_rules = _load_rules(conn, stats)
+
+    tx_rows = db.get_transactions_for_scoring_by_block(conn, network_id, block_number)
+    _score_transaction_rows(conn, cfg, tx_rules, tx_rows, stats)
+
+    wallet_ids = db.get_affected_wallet_ids_by_block(conn, network_id, block_number)
+    wallet_rows = db.get_wallets_for_scoring_by_ids(conn, wallet_ids)
+    _score_wallet_rows(conn, cfg, wallet_rules, wallet_rows, stats)
+
+    conn.commit()
+    return stats
+
+
+# ----------------------------------------------------------------------
+# Общие помощники (используются и полным, и инкрементальным расчётом)
+# ----------------------------------------------------------------------
+def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None:
+    for tx_id, amount, sender_label, receiver_label in rows:
         facts = TxFacts(
             tx_id=tx_id,
             amount_wei=int(amount),
@@ -118,8 +142,8 @@ def _score_transactions(conn, cfg, tx_rules, stats: RiskStats) -> None:
             stats.tx_alerts += 1
 
 
-def _score_wallets(conn, cfg, wallet_rules, stats: RiskStats) -> None:
-    for wallet_id, address, first_seen_at, label in db.get_wallets_for_scoring(conn):
+def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats) -> None:
+    for wallet_id, address, first_seen_at, label in wallets:
         history = db.get_wallet_tx_history(conn, wallet_id)
         facts = WalletFacts(
             wallet_id=wallet_id,

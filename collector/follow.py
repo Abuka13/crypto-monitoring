@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 
 from . import db, ingest
+from .config import RiskConfig
+from .risk import engine as risk_engine
 from .sources.base import BlockchainSource
 
 log = logging.getLogger(__name__)
@@ -51,6 +53,8 @@ def run_follow(
     poll_interval: float = 15.0,
     max_blocks_per_cycle: int = 10,
     from_block: int | None = None,
+    score: bool = False,
+    risk_cfg: RiskConfig | None = None,
 ) -> int:
     """Бесконечный цикл слежения. Останавливается по Ctrl+C.
 
@@ -58,6 +62,9 @@ def run_follow(
       - задан       -> начать с этого блока (догон истории);
       - иначе курсор -> продолжить с сохранённого места;
       - иначе        -> начать с текущей вершины (только новые блоки вперёд).
+
+    score=True: после ингеста каждого блока инкрементально считается риск и
+    создаются алерты только по данным этого блока (конвейер реального времени).
     """
     name = source.network_name
 
@@ -73,7 +80,8 @@ def run_follow(
             cursor = source.get_latest_block_number()
             log.info("Сохранённого состояния нет — следим с текущей вершины (%d)", cursor)
 
-    print(f"Слежение за новыми блоками {name}. Остановка — Ctrl+C.")
+    mode = "сбор + расчёт риска" if score else "только сбор"
+    print(f"Слежение за новыми блоками {name} ({mode}). Остановка — Ctrl+C.")
 
     while True:
         try:
@@ -93,6 +101,14 @@ def run_follow(
                     "Блок %d обработан (%s); отставание от вершины: %d",
                     block, stats, tip - block,
                 )
+                # Конвейер реального времени: считаем риск только по этому блоку.
+                if score and stats.inserted:
+                    try:
+                        rstats = risk_engine.score_block(conn, risk_cfg, network_id, block)
+                        log.info("Риск по блоку %d: %s", block, rstats)
+                    except Exception as exc:  # сбой расчёта не должен ронять сбор
+                        conn.rollback()
+                        log.error("Не удалось посчитать риск по блоку %d: %s", block, exc)
 
             # Если сильно отстаём — не спим, догоняем следующим циклом.
             if behind > max_blocks_per_cycle:
