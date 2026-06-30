@@ -64,11 +64,45 @@ python manage.py runserver   # http://localhost:8000
 ```
 
 - **Интерфейс аналитика (SPA): http://localhost:8000/** — дашборд, алерты, кошельки,
-  транзакции, правила; тёмная/светлая тема, языки RU/KK/EN. Фронтенд в [frontend/index.html](frontend/index.html)
-  (React, без сборки), ходит на тот же API (один источник — без CORS-проблем).
+  транзакции, правила; тёмная/светлая тема, языки RU/KK/EN. Это собранный React-проект
+  ([frontend/](frontend/), Vite), который Django отдаёт как статику с того же источника.
 - Документация API (Swagger UI): **http://localhost:8000/api/docs/**
 - OpenAPI-схема: http://localhost:8000/api/schema/
 - Описание эндпоинтов с примерами: [docs/api.md](docs/api.md)
+
+### Фронтенд (React + Vite)
+
+Интерфейс — настоящий React-проект в [frontend/](frontend/) (исходники в `frontend/src/`,
+React ставится локально через npm — интернет для React не нужен). **Требуется Node.js 18+.**
+
+**Режим разработки** (Vite dev-сервер с горячей перезагрузкой + Django отдельно):
+
+```bash
+# терминал 1 — backend (API на :8000)
+python manage.py runserver
+
+# терминал 2 — frontend (UI на :5173, запросы /api проксируются на Django)
+cd frontend
+npm install          # один раз
+npm run dev          # http://localhost:5173
+```
+
+Открывай **http://localhost:5173** — правки в `frontend/src/` применяются мгновенно.
+Прокси настроен в [frontend/vite.config.js](frontend/vite.config.js), поэтому CORS не нужен.
+
+**Сборка для показа/продакшена** (Django отдаёт готовую статику, один простой запуск):
+
+```bash
+cd frontend
+npm run build        # собирает в frontend/dist/
+cd ..
+python manage.py runserver   # http://localhost:8000 — отдаёт собранный SPA
+```
+
+JWT-аутентификация работает в обоих режимах одинаково.
+
+> Шрифты (Manrope / JetBrains Mono) подключаются из Google Fonts — это единственное,
+> что требует интернета. React и весь код приложения работают локально.
 
 ### Аутентификация (JWT)
 

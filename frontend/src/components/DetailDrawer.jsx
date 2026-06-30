@@ -1,3 +1,4 @@
+import React from 'react';
 import { h, css } from '../lib/dom';
 import { icon } from '../lib/icons';
 import { ringGauge } from '../lib/charts';
