@@ -55,3 +55,7 @@ class BlockchainSource(abc.ABC):
     @abc.abstractmethod
     def get_transactions_by_block(self, block_number: int) -> Iterator[RawTransaction]:
         """Все транзакции одного блока."""
+
+    @abc.abstractmethod
+    def get_latest_block_number(self) -> int:
+        """Номер самого свежего (последнего) блока сети — вершина цепочки."""

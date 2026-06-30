@@ -47,9 +47,15 @@ cp .env.example .env   # затем впиши ETHERSCAN_API_KEY и DATABASE_URL
 
 ```bash
 python -m collector --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --max 15
-python -m collector --score-risk        # расчёт риска + генерация алертов
-python -m collector --reset-data        # очистка данных (предпросмотр; --yes для удаления)
+python -m collector --block 19000000           # один конкретный блок
+python -m collector --follow                   # слежение: постоянно тянуть свежие блоки (Ctrl+C — стоп)
+python -m collector --score-risk               # расчёт риска + генерация алертов
+python -m collector --reset-data               # очистка данных (предпросмотр; --yes для удаления)
 ```
+
+Режим `--follow` опрашивает вершину цепочки и подтягивает новые блоки, сохраняя
+курсор в `.collector_state.json` (после перезапуска продолжает с того же места).
+Подробнее — в [COMMANDS.md](COMMANDS.md).
 
 Полная шпаргалка команд — в [COMMANDS.md](COMMANDS.md).
 

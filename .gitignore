@@ -40,6 +40,9 @@ Thumbs.db
 *.log
 logs/
 
+# Состояние слежения за блоками (--follow)
+.collector_state.json
+
 # Jupyter
 .ipynb_checkpoints/
 

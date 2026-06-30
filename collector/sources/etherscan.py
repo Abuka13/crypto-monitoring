@@ -94,16 +94,10 @@ class EtherscanSource(BlockchainSource):
                 time.sleep(backoff)
                 continue
 
-            status = str(data.get("status"))
             message = str(data.get("message", ""))
             result = data.get("result")
 
-            if status == "1":
-                return result
-            # status == "0": либо "нет данных" (норма), либо ошибка/лимит.
-            if "No transactions found" in message or result == []:
-                return []
-            # Превышение лимита — текст приходит в result/message. Повторяем.
+            # Превышение лимита может прийти в любом формате — обрабатываем первым.
             if "rate limit" in str(result).lower() or "rate limit" in message.lower():
                 backoff = min(2 ** attempt, 30)
                 log.warning("Лимит Etherscan, пауза %ds (попытка %d/%d)",
@@ -111,6 +105,20 @@ class EtherscanSource(BlockchainSource):
                 time.sleep(backoff)
                 last_error = EtherscanError(str(result) or message)
                 continue
+
+            # Модуль proxy отвечает в формате JSON-RPC (нет поля status).
+            if "jsonrpc" in data:
+                if data.get("error"):
+                    raise EtherscanError(f"Etherscan proxy: {data['error']}")
+                return result
+
+            # Обычные модули (account и т.п.) используют поле status.
+            status = str(data.get("status"))
+            if status == "1":
+                return result
+            # status == "0": либо "нет данных" (норма), либо ошибка.
+            if "No transactions found" in message or result == []:
+                return []
             # Прочая логическая ошибка — повторять смысла нет.
             raise EtherscanError(f"Etherscan: {message} / {result}")
 
@@ -176,6 +184,11 @@ class EtherscanSource(BlockchainSource):
             if len(result) < self._page_size:
                 return
             page += 1
+
+    def get_latest_block_number(self) -> int:
+        # proxy eth_blockNumber возвращает номер вершины цепочки (hex-строка).
+        result = self._request({"module": "proxy", "action": "eth_blockNumber"})
+        return int(result, 16)
 
     def get_transactions_by_block(self, block_number: int) -> Iterator[RawTransaction]:
         # proxy-модуль отдаёт сырой блок Ethereum (формат eth_getBlockByNumber).

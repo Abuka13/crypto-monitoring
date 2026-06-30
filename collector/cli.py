@@ -13,10 +13,19 @@ import argparse
 import logging
 import sys
 
-from . import db, ingest
+from . import db, follow, ingest
 from .config import Config, ConfigError
 from .risk import engine as risk_engine
 from .sources.etherscan import EtherscanSource
+
+
+def _make_source(config):
+    return EtherscanSource(
+        api_key=config.etherscan_api_key,
+        base_url=config.etherscan_base_url,
+        chain_id=config.etherscan_chain_id,
+        requests_per_second=config.requests_per_second,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -27,6 +36,10 @@ def _build_parser() -> argparse.ArgumentParser:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--address", help="Ethereum-адрес для сбора транзакций")
     group.add_argument("--block", type=int, help="Номер блока для сбора транзакций")
+    group.add_argument(
+        "--follow", action="store_true",
+        help="Следить за новыми блоками: постоянно подтягивать свежие транзакции",
+    )
     group.add_argument(
         "--score-risk", action="store_true",
         help="Рассчитать риск и сгенерировать алерты по уже собранным данным",
@@ -41,6 +54,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Ограничить число транзакций (полезно на бесплатном ключе)",
     )
     parser.add_argument(
+        "--poll-interval", type=float, default=15.0,
+        help="Пауза между опросами вершины цепочки, сек (для --follow; по умолчанию 15)",
+    )
+    parser.add_argument(
+        "--max-blocks-per-cycle", type=int, default=10,
+        help="Максимум блоков за один цикл слежения (для --follow; по умолчанию 10)",
+    )
+    parser.add_argument(
+        "--from-block", type=int, default=None,
+        help="С какого блока начать слежение (для --follow; иначе — с текущей вершины)",
+    )
+    parser.add_argument(
         "--yes", action="store_true",
         help="Подтвердить удаление для --reset-data без дополнительного запроса",
     )
@@ -50,13 +75,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_collect(conn, config, args) -> int:
-    source = EtherscanSource(
-        api_key=config.etherscan_api_key,
-        base_url=config.etherscan_base_url,
-        chain_id=config.etherscan_chain_id,
-        requests_per_second=config.requests_per_second,
+def _run_follow(conn, config, args) -> int:
+    source = _make_source(config)
+    network_id = db.get_network_id(conn, source.network_name)
+    return follow.run_follow(
+        conn, source, network_id,
+        poll_interval=args.poll_interval,
+        max_blocks_per_cycle=args.max_blocks_per_cycle,
+        from_block=args.from_block,
     )
+
+
+def _run_collect(conn, config, args) -> int:
+    source = _make_source(config)
     network_id = db.get_network_id(conn, source.network_name)
     if args.address:
         print(f"Сбор транзакций для адреса {args.address} ...")
@@ -128,6 +159,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.reset_data:
             return _run_reset(conn, args.yes)
+        if args.follow:
+            return _run_follow(conn, config, args)
         if args.score_risk:
             return _run_score_risk(conn, config)
         return _run_collect(conn, config, args)
