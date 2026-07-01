@@ -254,6 +254,7 @@ export default class App extends React.Component {
       h(DetailDrawer, {
         t, selected:s.selected, kind:s.selectedKind, detailData:s.detailData,
         onClose:() => this.closeDetail(), onSetStatus:ns => this.setStatus(ns),
+        copy:x => this.copy(x),
       }));
   }
 

@@ -19,16 +19,16 @@ function detailVM(selected, kind, detailData, t){
       const c = d.context || {};
       if(d.target_type === 'transaction'){
         ctxRows = [
-          {k:t.f.hash, v:shorten(c.tx_hash, 10, 8)},
+          {k:t.f.hash, v:shorten(c.tx_hash, 10, 8), copy:c.tx_hash},
           {k:t.f.amount, v:weiToEth(c.amount, 4) + ' ETH'},
-          {k:t.f.sender, v:shorten(c.sender_address)},
-          {k:t.f.receiver, v:shorten(c.receiver_address)},
+          {k:t.f.sender, v:shorten(c.sender_address), copy:c.sender_address},
+          {k:t.f.receiver, v:shorten(c.receiver_address), copy:c.receiver_address},
           {k:t.f.block, v:num(c.block_number)},
           {k:t.f.time, v:fmtDate(Date.parse(c.transaction_timestamp))},
         ];
       } else {
         ctxRows = [
-          {k:t.f.address, v:shorten(c.address, 10, 8)},
+          {k:t.f.address, v:shorten(c.address, 10, 8), copy:c.address},
           {k:t.f.txcount, v:num(c.transaction_count)},
           {k:t.f.received, v:weiToEth(c.total_received, 3) + ' ETH'},
           {k:t.f.sent, v:weiToEth(c.total_sent, 3) + ' ETH'},
@@ -60,7 +60,7 @@ function detailVM(selected, kind, detailData, t){
       riskLabel:t.risk[bk], riskStyle:'background:' + rm.bg + ';color:' + rm.color + ';border:1px solid ' + rm.color + '40;',
       gauge:ringGauge(sel.risk_score, rm.color), score:Math.round(sel.risk_score), scoreColor:rm.color,
       ctxRows:[
-        {k:t.f.address, v:shorten(sel.address, 10, 8)},
+        {k:t.f.address, v:shorten(sel.address, 10, 8), copy:sel.address},
         {k:t.f.txcount, v:num(sel.transaction_count)},
         {k:t.f.received, v:weiToEth(sel.total_received, 3) + ' ETH'},
         {k:t.f.sent, v:weiToEth(sel.total_sent, 3) + ' ETH'},
@@ -75,9 +75,9 @@ function detailVM(selected, kind, detailData, t){
     statusLabel:t.txStatus[x.status] || x.status, statusStyle:'background:' + st.b + ';color:' + st.c + ';',
     gauge:null, score:null,
     ctxRows:[
-      {k:t.f.hash, v:shorten(x.tx_hash, 10, 8)},
-      {k:t.f.sender, v:shorten(x.sender_address)},
-      {k:t.f.receiver, v:shorten(x.receiver_address)},
+      {k:t.f.hash, v:shorten(x.tx_hash, 10, 8), copy:x.tx_hash},
+      {k:t.f.sender, v:shorten(x.sender_address), copy:x.sender_address},
+      {k:t.f.receiver, v:shorten(x.receiver_address), copy:x.receiver_address},
       {k:t.f.amount, v:weiToEth(x.amount, 4) + ' ETH'},
       {k:t.f.block, v:num(x.block_number)},
       {k:t.f.time, v:fmtDate(Date.parse(x.transaction_timestamp))},
@@ -85,7 +85,7 @@ function detailVM(selected, kind, detailData, t){
   };
 }
 
-export default function DetailDrawer({ t, selected, kind, detailData, onClose, onSetStatus }){
+export default function DetailDrawer({ t, selected, kind, detailData, onClose, onSetStatus, copy }){
   if(!selected) return null;
   const d = detailVM(selected, kind, detailData, t);
   if(!d) return null;
@@ -124,8 +124,10 @@ export default function DetailDrawer({ t, selected, kind, detailData, onClose, o
           h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.context),
           h('div', {style:css("background:var(--card);border:1px solid var(--border);border-radius:13px;overflow:hidden;")},
             d.ctxRows.map((row, i) => h('div', {key:i, style:css("display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border2);")},
-              h('span', {style:css("font-size:12.5px;color:var(--muted);flex-shrink:0;width:130px;")}, row.k),
-              h('span', {style:css("flex:1;text-align:right;font-size:12.5px;font-family:'JetBrains Mono',monospace;font-weight:600;word-break:break-all;")}, row.v))))) : null),
+              h('span', {style:css("font-size:12.5px;color:var(--muted);flex-shrink:0;width:120px;")}, row.k),
+              h('span', {style:css("flex:1;text-align:right;font-size:12.5px;font-family:'JetBrains Mono',monospace;font-weight:600;word-break:break-all;")}, row.v),
+              row.copy ? h('button', {onClick:() => copy && copy(row.copy), title:row.copy,
+                style:css("border:none;background:transparent;color:var(--muted);cursor:pointer;display:flex;padding:2px;flex-shrink:0;")}, icon('copy', 14)) : null)))) : null),
 
       d.hasActions ? h('div', {style:css("display:flex;gap:8px;padding:18px 22px;border-top:1px solid var(--border);flex-shrink:0;")},
         d.actions.map((ac, i) => h('button', {key:i, onClick:() => onSetStatus(ac.status),
