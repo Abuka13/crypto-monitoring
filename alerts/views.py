@@ -147,7 +147,9 @@ class WalletViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = Wallet.objects.all().order_by("-risk_score", "id")
     serializer_class = WalletSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["is_flagged", "label"]
+    search_fields = ["address"]           # ?search= по адресу кошелька
     ordering_fields = ["risk_score", "transaction_count"]
     # Пагинация (limit/offset) — чтобы сервер не отдавал десятки тысяч строк разом.
 
@@ -175,7 +177,10 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
         .order_by("-transaction_timestamp", "-id")
     )
     serializer_class = TransactionSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["status"]
+    # ?search= по хешу транзакции и адресам отправителя/получателя
+    search_fields = ["tx_hash", "sender_wallet__address", "receiver_wallet__address"]
     # Пагинация (limit/offset) — транзакций может быть очень много.
 
 

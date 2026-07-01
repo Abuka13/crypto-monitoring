@@ -32,7 +32,7 @@ export default class App extends React.Component {
       theme:'dark', lang:'ru', screen:'dashboard',
       sidebarExpanded:true,
       fRisk:'all', fStatus:'all', fType:'all', q:'', alertsView:'table',
-      wRisk:'all', wFlag:'all',
+      wRisk:'all', wFlag:'all', qWallets:'', qTx:'',
       selected:null, selectedKind:null, detailData:null,
       // Списки хранят ТОЛЬКО текущую страницу (не накапливают).
       alerts:[], wallets:[], txs:[], rules:[], stats:null,
@@ -62,10 +62,13 @@ export default class App extends React.Component {
     const s = this.state; const p = {limit:PAGE, offset:(s.walletsPage - 1) * PAGE};
     if(s.wRisk !== 'all') p.risk = s.wRisk;
     if(s.wFlag === 'flagged') p.is_flagged = 'true';
+    const q = s.qWallets.trim(); if(q) p.search = q;
     return p;
   }
   _txParams(){
-    const s = this.state; return {limit:PAGE, offset:(s.txsPage - 1) * PAGE};
+    const s = this.state; const p = {limit:PAGE, offset:(s.txsPage - 1) * PAGE};
+    const q = s.qTx.trim(); if(q) p.search = q;
+    return p;
   }
 
   T_(){ return getT(this.state.lang); }
@@ -168,11 +171,28 @@ export default class App extends React.Component {
     this.setState({[name]:value, [pageKey]:1}, () => this.reloadList(kind));
   }
 
-  // Поиск (шапка) фильтрует алерты на сервере, с задержкой против лишних запросов.
+  // Поиск (шапка) — контекстный: ищет по текущему экрану (алерты/кошельки/транзакции),
+  // на сервере, с задержкой против лишних запросов на каждую букву.
   onSearch(v){
-    this.setState({q:v});
+    const screen = this.state.screen;
+    const route = {
+      alerts:      {field:'q',        pageKey:'alertsPage',  kind:'alerts'},
+      wallets:     {field:'qWallets', pageKey:'walletsPage', kind:'wallets'},
+      transactions:{field:'qTx',      pageKey:'txsPage',     kind:'txs'},
+    }[screen];
+    if(!route) return;  // на дашборде/правилах поиск не применяется
+    this.setState({[route.field]:v});
     clearTimeout(this._searchT);
-    this._searchT = setTimeout(() => this.setState({alertsPage:1}, () => this.reloadList('alerts')), 350);
+    this._searchT = setTimeout(
+      () => this.setState({[route.pageKey]:1}, () => this.reloadList(route.kind)), 350);
+  }
+
+  // Текущее значение и подсказка поиска для активного экрана.
+  _searchValue(){
+    return {wallets:this.state.qWallets, transactions:this.state.qTx}[this.state.screen] ?? this.state.q;
+  }
+  _searchPlaceholder(t){
+    return {wallets:t.searchPhWallet, transactions:t.searchPhTx}[this.state.screen] || t.searchPh;
   }
 
   // ---------- helpers ----------
@@ -246,7 +266,7 @@ export default class App extends React.Component {
         h(Topbar, {
           t, lang:s.lang, onLang:k => this.setState({lang:k}),
           theme:s.theme, onToggleTheme:() => this.setState({theme:s.theme === 'dark' ? 'light' : 'dark'}),
-          q:s.q, onSearch:v => this.onSearch(v),
+          q:this._searchValue(), placeholder:this._searchPlaceholder(t), onSearch:v => this.onSearch(v),
           expanded:s.sidebarExpanded, onToggleSidebar:() => this.setState({sidebarExpanded:!s.sidebarExpanded}),
           user:s.user,
         }),
