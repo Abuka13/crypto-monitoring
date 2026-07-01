@@ -61,12 +61,13 @@ class RiskConfig:
                 os.getenv("RISK_LARGE_AMOUNT_WEI", str(10 * ETH))
             ),
             new_wallet_max_age_days=int(os.getenv("RISK_NEW_WALLET_MAX_AGE_DAYS", "30")),
-            high_frequency_count=int(os.getenv("RISK_HIGH_FREQ_COUNT", "10")),
+            # Дефолты откалиброваны под поток mainnet (были 10/10 — слишком чувствительны).
+            high_frequency_count=int(os.getenv("RISK_HIGH_FREQ_COUNT", "50")),
             high_frequency_window_hours=int(os.getenv("RISK_HIGH_FREQ_WINDOW_HOURS", "24")),
             structuring_small_amount_wei=int(
                 os.getenv("RISK_STRUCTURING_SMALL_WEI", str(ETH // 100))  # 0.01 ETH
             ),
-            structuring_min_count=int(os.getenv("RISK_STRUCTURING_MIN_COUNT", "10")),
+            structuring_min_count=int(os.getenv("RISK_STRUCTURING_MIN_COUNT", "30")),
         )
 
 

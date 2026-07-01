@@ -30,26 +30,55 @@ log = logging.getLogger(__name__)
 class RiskStats:
     tx_evaluated: int = 0
     tx_risk_rows: int = 0
-    tx_alerts: int = 0
+    tx_alerts: int = 0            # новые алерты по транзакциям
+    tx_alerts_updated: int = 0    # обновлённые (дедуп: активный уже был)
     wallets_evaluated: int = 0
     wallet_risk_rows: int = 0
-    wallet_alerts: int = 0
+    wallet_alerts: int = 0        # новые алерты по кошелькам
+    wallet_alerts_updated: int = 0
     wallets_flagged: int = 0
     skipped_rules: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         return (
             f"транзакций оценено={self.tx_evaluated}, "
-            f"оценок tx={self.tx_risk_rows}, алертов по tx={self.tx_alerts}; "
+            f"оценок tx={self.tx_risk_rows}, алертов по tx (нов/обновл)={self.tx_alerts}/{self.tx_alerts_updated}; "
             f"кошельков оценено={self.wallets_evaluated}, "
             f"оценок wallet={self.wallet_risk_rows}, "
-            f"алертов по wallet={self.wallet_alerts}, "
+            f"алертов по wallet (нов/обновл)={self.wallet_alerts}/{self.wallet_alerts_updated}, "
             f"помечено кошельков={self.wallets_flagged}"
         )
 
 
 def _reason(fired: list[tuple[str, Decimal]]) -> str:
     return "; ".join(f"{name} (+{score})" for name, score in fired)
+
+
+def _emit_or_refresh_alert(conn, *, target_type, object_id, risk_id, title, description, level) -> str:
+    """Создать алерт, либо обновить существующий активный (дедуп по объекту).
+
+    Один активный (open/in_progress) алерт на объект: если он уже есть — обновляем
+    его свежей оценкой, а не плодим дубль. Новый алерт появится только после того,
+    как предыдущий закрыт (closed/false_positive). Возвращает 'created' | 'updated'.
+    """
+    if target_type == "wallet":
+        active = db.find_active_alert_for_wallet(conn, object_id)
+    else:
+        active = db.find_active_alert_for_transaction(conn, object_id)
+
+    if active is not None:
+        db.refresh_alert(
+            conn, alert_id=active, target_type=target_type, risk_id=risk_id,
+            title=title, description=description, level=level,
+        )
+        return "updated"
+
+    db.insert_alert(
+        conn, target_type=target_type, title=title, description=description, level=level,
+        transaction_risk_id=risk_id if target_type == "transaction" else None,
+        wallet_risk_id=risk_id if target_type == "wallet" else None,
+    )
+    return "created"
 
 
 def _load_rules(conn, stats: RiskStats):
@@ -131,15 +160,16 @@ def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None
         stats.tx_risk_rows += 1
 
         if final_score >= rules.HIGH_THRESHOLD:
-            db.insert_alert(
-                conn,
-                target_type="transaction",
-                transaction_risk_id=risk_id,
+            outcome = _emit_or_refresh_alert(
+                conn, target_type="transaction", object_id=tx_id, risk_id=risk_id,
                 title=f"Рискованная транзакция: {risk_level} ({final_score})",
                 description=f"Сработавшие правила: {_reason(fired)}",
                 level=rules.alert_level_from_risk_level(risk_level),
             )
-            stats.tx_alerts += 1
+            if outcome == "created":
+                stats.tx_alerts += 1
+            else:
+                stats.tx_alerts_updated += 1
 
 
 def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats) -> None:
@@ -176,12 +206,13 @@ def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats) -> No
             stats.wallets_flagged += 1
 
         if final_score >= rules.HIGH_THRESHOLD:
-            db.insert_alert(
-                conn,
-                target_type="wallet",
-                wallet_risk_id=risk_id,
+            outcome = _emit_or_refresh_alert(
+                conn, target_type="wallet", object_id=wallet_id, risk_id=risk_id,
                 title=f"Рискованный кошелёк {address[:12]}…: {risk_level} ({final_score})",
                 description=f"Сработавшие правила: {_reason(fired)}",
                 level=rules.alert_level_from_risk_level(risk_level),
             )
-            stats.wallet_alerts += 1
+            if outcome == "created":
+                stats.wallet_alerts += 1
+            else:
+                stats.wallet_alerts_updated += 1

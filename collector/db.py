@@ -378,6 +378,64 @@ def reset_data(conn) -> dict[str, int]:
     return deleted
 
 
+# --- Дедупликация алертов: один активный (open/in_progress) алерт на объект ---
+
+def find_active_alert_for_wallet(conn, wallet_id: int) -> int | None:
+    """id активного (open/in_progress) алерта по кошельку, иначе None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT a.id FROM alert a
+            JOIN wallet_risk wr ON wr.id = a.wallet_risk_id
+            WHERE a.status IN ('open', 'in_progress') AND wr.wallet_id = %s
+            ORDER BY a.id DESC LIMIT 1
+            """,
+            (wallet_id,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def find_active_alert_for_transaction(conn, transaction_id: int) -> int | None:
+    """id активного (open/in_progress) алерта по транзакции, иначе None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT a.id FROM alert a
+            JOIN transaction_risk tr ON tr.id = a.transaction_risk_id
+            WHERE a.status IN ('open', 'in_progress') AND tr.transaction_id = %s
+            ORDER BY a.id DESC LIMIT 1
+            """,
+            (transaction_id,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def refresh_alert(
+    conn, *, alert_id: int, target_type: str, risk_id: int,
+    title: str, description: str, level: str,
+) -> None:
+    """Обновить существующий активный алерт новой оценкой (без дубля).
+
+    Перецепляем на свежую строку риска, обновляем заголовок/описание/уровень и
+    время (created_at = now()). Статус НЕ трогаем — работа аналитика сохраняется.
+    """
+    with conn.cursor() as cur:
+        if target_type == "wallet":
+            cur.execute(
+                "UPDATE alert SET wallet_risk_id=%s, transaction_risk_id=NULL, "
+                "title=%s, description=%s, level=%s, created_at=now() WHERE id=%s",
+                (risk_id, title, description, level, alert_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE alert SET transaction_risk_id=%s, wallet_risk_id=NULL, "
+                "title=%s, description=%s, level=%s, created_at=now() WHERE id=%s",
+                (risk_id, title, description, level, alert_id),
+            )
+
+
 def get_sample_alerts(conn, limit: int = 5) -> list[tuple]:
     """Несколько свежих открытых алертов для вывода в отчёте."""
     with conn.cursor() as cur:

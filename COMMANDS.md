@@ -151,8 +151,8 @@ SELECT id, name, score, is_active FROM rule ORDER BY id;
 ```dotenv
 RISK_LARGE_AMOUNT_WEI=10000000000000000000      # «Большая сумма», порог (10 ETH)
 RISK_NEW_WALLET_MAX_AGE_DAYS=30                 # «Новый кошелёк»: не старше N дней
-RISK_HIGH_FREQ_COUNT=10                         # «Высокая частота»: >= N транзакций
+RISK_HIGH_FREQ_COUNT=50                         # «Высокая частота»: >= N транзакций (mainnet)
 RISK_HIGH_FREQ_WINDOW_HOURS=24                  #   в окне M часов
 RISK_STRUCTURING_SMALL_WEI=10000000000000000    # «Дробление»: порог «мелкой» суммы (0.01 ETH)
-RISK_STRUCTURING_MIN_COUNT=10                   #   и минимум таких операций
+RISK_STRUCTURING_MIN_COUNT=30                   #   и минимум таких операций (mainnet)
 ```
