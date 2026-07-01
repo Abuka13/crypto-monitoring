@@ -173,7 +173,7 @@ CREATE TABLE alert (
     resolved_at         TIMESTAMPTZ,
 
     CONSTRAINT chk_alert_target_type CHECK (target_type IN ('transaction', 'wallet')),
-    CONSTRAINT chk_alert_level  CHECK (level  IN ('low', 'medium', 'high')),
+    CONSTRAINT chk_alert_level  CHECK (level  IN ('low', 'medium', 'high', 'critical')),
     CONSTRAINT chk_alert_status CHECK (status IN ('open', 'in_progress', 'closed', 'false_positive')),
 
     -- ровно один из двух источников риска должен быть заполнен

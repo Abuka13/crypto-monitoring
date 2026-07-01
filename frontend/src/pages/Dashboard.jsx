@@ -17,6 +17,7 @@ export default function Dashboard({ t, stats, alerts, openAlert }){
     {label:t.stats.last24, value:s.alerts_last_24h || 0},
   ];
   const riskItems = [
+    {label:t.risk.critical, value:bl.critical || 0, color:'#c05bff'},
     {label:t.risk.high, value:bl.high || 0, color:'#ff6f6f'},
     {label:t.risk.medium, value:bl.medium || 0, color:'#f5b54a'},
     {label:t.risk.low, value:bl.low || 0, color:'#34d399'},

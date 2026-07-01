@@ -234,7 +234,7 @@ def stats_view(request):
     for row in Alert.objects.values("status").annotate(n=Count("id")):
         by_status[row["status"]] = row["n"]
 
-    by_level = {"low": 0, "medium": 0, "high": 0}
+    by_level = {"low": 0, "medium": 0, "high": 0, "critical": 0}
     for row in Alert.objects.values("level").annotate(n=Count("id")):
         by_level[row["level"]] = row["n"]
 

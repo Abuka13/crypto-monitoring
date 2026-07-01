@@ -1,8 +1,9 @@
 // Цветовые карты для уровней риска, статусов, типов цели и статусов транзакций.
 export const RISK = {
-  high:   {color:'#ff6f6f', bg:'rgba(255,90,90,.13)'},
-  medium: {color:'#f5b54a', bg:'rgba(245,170,60,.14)'},
-  low:    {color:'#34d399', bg:'rgba(52,211,153,.13)'},
+  critical: {color:'#c05bff', bg:'rgba(176,82,255,.16)'},
+  high:     {color:'#ff6f6f', bg:'rgba(255,90,90,.13)'},
+  medium:   {color:'#f5b54a', bg:'rgba(245,170,60,.14)'},
+  low:      {color:'#34d399', bg:'rgba(52,211,153,.13)'},
 };
 export const STAT = {
   open:           {color:'#f5b54a', bg:'rgba(245,170,60,.13)'},

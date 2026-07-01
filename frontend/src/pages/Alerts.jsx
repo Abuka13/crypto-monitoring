@@ -8,7 +8,7 @@ import Pagination from '../components/Pagination';
 // Фильтрация и пагинация — на сервере. Страница хранит только текущие строки.
 export default function Alerts({ t, alerts, total, page, loading, onPage, fRisk, fStatus, fType, alertsView, onFilter, openAlert }){
   const rows = alerts.map(a => alertVM(a, {t, openAlert}));
-  const riskFilters = [['all',t.all],['high',t.risk.high],['medium',t.risk.medium],['low',t.risk.low]].map(x => chip(x[1], fRisk === x[0], () => onFilter('fRisk', x[0])));
+  const riskFilters = [['all',t.all],['critical',t.risk.critical],['high',t.risk.high],['medium',t.risk.medium],['low',t.risk.low]].map(x => chip(x[1], fRisk === x[0], () => onFilter('fRisk', x[0])));
   const statusFilters = [['all',t.all],['open',t.status.open],['in_progress',t.status.in_progress],['closed',t.status.closed],['false_positive',t.status.false_positive]].map(x => chip(x[1], fStatus === x[0], () => onFilter('fStatus', x[0])));
   const typeFilters = [['all',t.all],['transaction',t.typeTx],['wallet',t.typeWlt]].map(x => chip(x[1], fType === x[0], () => onFilter('fType', x[0])));
   const viewTableChip = chip(t.view.table, alertsView === 'table', () => onFilter('alertsView', 'table'));

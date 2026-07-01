@@ -159,7 +159,7 @@ def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None
         stats.tx_evaluated += 1
         stats.tx_risk_rows += 1
 
-        if final_score >= rules.HIGH_THRESHOLD:
+        if rules.alert_creation_needed(risk_level):
             outcome = _emit_or_refresh_alert(
                 conn, target_type="transaction", object_id=tx_id, risk_id=risk_id,
                 title=f"Рискованная транзакция: {risk_level} ({final_score})",
@@ -191,7 +191,7 @@ def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats) -> No
         rule_score = sum((s for _, s in fired), Decimal(0))
         final_score = rule_score
         risk_level = rules.level_from_score(final_score)
-        is_flagged = final_score >= rules.HIGH_THRESHOLD
+        is_flagged = rules.alert_creation_needed(risk_level)
 
         risk_id = db.insert_wallet_risk(
             conn, wallet_id=wallet_id, rule_score=rule_score,
@@ -205,7 +205,7 @@ def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats) -> No
         if is_flagged:
             stats.wallets_flagged += 1
 
-        if final_score >= rules.HIGH_THRESHOLD:
+        if rules.alert_creation_needed(risk_level):
             outcome = _emit_or_refresh_alert(
                 conn, target_type="wallet", object_id=wallet_id, risk_id=risk_id,
                 title=f"Рискованный кошелёк {address[:12]}…: {risk_level} ({final_score})",

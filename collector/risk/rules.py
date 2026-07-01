@@ -23,26 +23,36 @@ RULE_STRUCTURING = "Дробление сумм"
 
 MIXER_LABEL = "миксер"
 
-# Алерт создаётся при final_score >= этого порога (граница уровня HIGH).
-HIGH_THRESHOLD = Decimal(50)
+# Алерт создаётся, если балл ВЫШЕ этого порога (то есть уровень не LOW).
+# Балл <= 50 (LOW) остаётся оценкой риска, но алерт не порождает.
+ALERT_MIN_SCORE = Decimal(50)
 
-# В таблице alert уровень в нижнем регистре и без CRITICAL — маппим из risk_level.
-_ALERT_LEVEL = {"LOW": "low", "MEDIUM": "medium", "HIGH": "high", "CRITICAL": "high"}
+# risk_level (UPPER) -> alert.level (lower). Все четыре уровня поддержаны схемой.
+_ALERT_LEVEL = {"LOW": "low", "MEDIUM": "medium", "HIGH": "high", "CRITICAL": "critical"}
 
 
 def level_from_score(score: Decimal) -> str:
-    """final_score -> risk_level: 0–25 LOW, 25–50 MEDIUM, 50–75 HIGH, 75+ CRITICAL."""
-    if score >= 75:
+    """final_score -> risk_level.
+
+    Границы: 0–50 LOW · 51–70 MEDIUM · 71–80 HIGH · 81+ CRITICAL.
+    (50→LOW, 70→MEDIUM, 80→HIGH, 81→CRITICAL.)
+    """
+    if score > 80:
         return "CRITICAL"
-    if score >= 50:
+    if score > 70:
         return "HIGH"
-    if score >= 25:
+    if score > 50:
         return "MEDIUM"
     return "LOW"
 
 
+def alert_creation_needed(risk_level: str) -> bool:
+    """Алерт создаётся для всех уровней, кроме LOW."""
+    return risk_level != "LOW"
+
+
 def alert_level_from_risk_level(risk_level: str) -> str:
-    """risk_level (UPPER, c CRITICAL) -> alert.level (lower, без critical)."""
+    """risk_level (UPPER) -> alert.level (lower, включая critical)."""
     return _ALERT_LEVEL[risk_level]
 
 
