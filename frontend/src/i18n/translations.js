@@ -22,6 +22,7 @@ export const T = {
     f:{hash:'Хеш',amount:'Сумма (ETH)',sender:'Отправитель',receiver:'Получатель',block:'Номер блока',time:'Время',address:'Адрес',txcount:'Число транзакций',received:'Всего получено',sent:'Всего отправлено',riskscore:'Риск-скор',flagged:'Помечен'},
     act:{take:'Взять в работу',close:'Закрыть',false:'Пометить ложным'},
     copied:'Скопировано', statusChanged:'Статус обновлён', yes:'Да', no:'Нет',
+    loadMore:'Показать ещё', shown:'показано',
     rulesTitle:'Правила Rule Engine', rulesSub:'Настройки расчёта риска. Включённые правила влияют на итоговый балл.'
   },
   kk:{
@@ -45,6 +46,7 @@ export const T = {
     f:{hash:'Хеш',amount:'Сома (ETH)',sender:'Жіберуші',receiver:'Алушы',block:'Блок нөмірі',time:'Уақыт',address:'Мекенжай',txcount:'Транзакция саны',received:'Барлығы алынды',sent:'Барлығы жіберілді',riskscore:'Қауіп ұпайы',flagged:'Белгіленген'},
     act:{take:'Жұмысқа алу',close:'Жабу',false:'Жалған деп белгілеу'},
     copied:'Көшірілді', statusChanged:'Мәртебе жаңартылды', yes:'Иә', no:'Жоқ',
+    loadMore:'Тағы көрсету', shown:'көрсетілген',
     rulesTitle:'Rule Engine ережелері', rulesSub:'Қауіпті есептеу баптаулары. Қосылған ережелер қорытынды ұпайға әсер етеді.'
   },
   en:{
@@ -68,6 +70,7 @@ export const T = {
     f:{hash:'Hash',amount:'Amount (ETH)',sender:'Sender',receiver:'Receiver',block:'Block number',time:'Time',address:'Address',txcount:'Transactions',received:'Total received',sent:'Total sent',riskscore:'Risk score',flagged:'Flagged'},
     act:{take:'Take in progress',close:'Close',false:'Mark false positive'},
     copied:'Copied', statusChanged:'Status updated', yes:'Yes', no:'No',
+    loadMore:'Load more', shown:'shown',
     rulesTitle:'Rule Engine', rulesSub:'Risk scoring configuration. Active rules contribute to the final score.'
   }
 };

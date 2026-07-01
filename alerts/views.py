@@ -10,10 +10,13 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.db.models import Count
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 from drf_spectacular.utils import (
     OpenApiExample, OpenApiParameter, OpenApiResponse, extend_schema,
 )
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
 from rest_framework import status as http_status
 from rest_framework import viewsets
 from rest_framework.decorators import action, api_view
@@ -43,8 +46,11 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         .all()
         .order_by("-created_at")  # свежие сверху
     )
-    # Фильтры через query-параметры (?status=&level=&target_type=).
+    # Фильтры через query-параметры (?status=&level=&target_type=&search=).
+    # Фильтрация серверная — номера страниц пагинации остаются корректными.
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["status", "level", "target_type"]
+    search_fields = ["title", "description"]
     ordering_fields = ["created_at", "level", "status"]
     ordering = ["-created_at"]
 
@@ -131,15 +137,32 @@ def logout_view(request):
     return Response(status=http_status.HTTP_205_RESET_CONTENT)
 
 
-@extend_schema(tags=["wallets"])
+@extend_schema(
+    tags=["wallets"],
+    parameters=[OpenApiParameter(
+        "risk", str, description="Уровень риска: low (<40) / medium (40–70) / high (>=70)")],
+)
 class WalletViewSet(viewsets.ReadOnlyModelViewSet):
-    """Кошельки (только чтение). Фильтры: is_flagged."""
+    """Кошельки (только чтение). Фильтры: is_flagged, label, risk (уровень)."""
 
     queryset = Wallet.objects.all().order_by("-risk_score", "id")
     serializer_class = WalletSerializer
     filterset_fields = ["is_flagged", "label"]
     ordering_fields = ["risk_score", "transaction_count"]
-    pagination_class = None  # данных немного — отдаём полным списком
+    # Пагинация (limit/offset) — чтобы сервер не отдавал десятки тысяч строк разом.
+
+    def get_queryset(self):
+        # Фильтр по уровню риска (совпадает с делением на клиенте: >=70 high,
+        # >=40 medium, иначе low) — серверный, чтобы пагинация была корректной.
+        qs = super().get_queryset()
+        risk = self.request.query_params.get("risk")
+        if risk == "high":
+            qs = qs.filter(risk_score__gte=70)
+        elif risk == "medium":
+            qs = qs.filter(risk_score__gte=40, risk_score__lt=70)
+        elif risk == "low":
+            qs = qs.filter(risk_score__lt=40)
+        return qs
 
 
 @extend_schema(tags=["transactions"])
@@ -153,7 +176,7 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
     )
     serializer_class = TransactionSerializer
     filterset_fields = ["status"]
-    pagination_class = None
+    # Пагинация (limit/offset) — транзакций может быть очень много.
 
 
 @extend_schema(tags=["rules"])
@@ -211,6 +234,23 @@ def stats_view(request):
         by_level[row["level"]] = row["n"]
 
     since = timezone.now() - timedelta(hours=24)
+
+    # Тренд за 14 дней (счётчик алертов по дням) — считается на сервере, чтобы
+    # дашборду не требовалось грузить все алерты на клиент.
+    days = 14
+    start = timezone.now() - timedelta(days=days - 1)
+    trend = [0] * days
+    rows = (
+        Alert.objects.filter(created_at__gte=start.replace(hour=0, minute=0, second=0, microsecond=0))
+        .annotate(day=TruncDate("created_at"))
+        .values("day").annotate(n=Count("id"))
+    )
+    today = timezone.now().date()
+    for row in rows:
+        idx = days - 1 - (today - row["day"]).days
+        if 0 <= idx < days:
+            trend[idx] = row["n"]
+
     return Response(
         {
             "total_alerts": Alert.objects.count(),
@@ -218,5 +258,6 @@ def stats_view(request):
             "by_status": by_status,
             "by_level": by_level,
             "flagged_wallets": Wallet.objects.filter(is_flagged=True).count(),
+            "trend": trend,
         }
     )

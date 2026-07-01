@@ -1,23 +1,13 @@
 import { h, css } from '../lib/dom';
 import { chip, thStyle } from '../lib/ui';
 import { alertVM } from '../lib/viewmodels';
+import { PAGE } from '../lib/constants';
 import FilterRow from '../components/FilterRow';
+import Pagination from '../components/Pagination';
 
-// Фильтрация алертов (как в исходном getFilteredAlerts).
-function filterAlerts(alerts, f){
-  const ql = (f.q || '').trim().toLowerCase();
-  return alerts.filter(a => {
-    if(f.fRisk !== 'all' && a.level !== f.fRisk) return false;
-    if(f.fStatus !== 'all' && a.status !== f.fStatus) return false;
-    if(f.fType !== 'all' && a.target_type !== f.fType) return false;
-    if(ql){ const hay = (('#' + a.id) + ' ' + (a.title || '') + ' ' + (a.description || '')).toLowerCase(); if(!hay.includes(ql)) return false; }
-    return true;
-  });
-}
-
-export default function Alerts({ t, alerts, fRisk, fStatus, fType, q, alertsView, onFilter, openAlert }){
-  const filtered = filterAlerts(alerts, {fRisk, fStatus, fType, q});
-  const rows = filtered.map(a => alertVM(a, {t, openAlert}));
+// Фильтрация и пагинация — на сервере. Страница хранит только текущие строки.
+export default function Alerts({ t, alerts, total, page, loading, onPage, fRisk, fStatus, fType, alertsView, onFilter, openAlert }){
+  const rows = alerts.map(a => alertVM(a, {t, openAlert}));
   const riskFilters = [['all',t.all],['high',t.risk.high],['medium',t.risk.medium],['low',t.risk.low]].map(x => chip(x[1], fRisk === x[0], () => onFilter('fRisk', x[0])));
   const statusFilters = [['all',t.all],['open',t.status.open],['in_progress',t.status.in_progress],['closed',t.status.closed],['false_positive',t.status.false_positive]].map(x => chip(x[1], fStatus === x[0], () => onFilter('fStatus', x[0])));
   const typeFilters = [['all',t.all],['transaction',t.typeTx],['wallet',t.typeWlt]].map(x => chip(x[1], fType === x[0], () => onFilter('fType', x[0])));
@@ -29,7 +19,7 @@ export default function Alerts({ t, alerts, fRisk, fStatus, fType, q, alertsView
       h('div', null,
         h('div', {style:css("font-size:21px;font-weight:800;letter-spacing:-.5px;")}, t.nav.alerts),
         h('div', {style:css("font-size:12.5px;color:var(--muted);margin-top:2px;")},
-          h('span', {style:css("font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--text);")}, String(filtered.length)), ' ', t.found)),
+          h('span', {style:css("font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--text);")}, String(total)), ' ', t.found)),
       h('div', {style:css("display:flex;gap:6px;background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:3px;")},
         h('button', {onClick:viewTableChip.onClick, style:css("border-radius:8px;padding:7px 14px;font-size:12.5px;font-family:inherit;cursor:pointer;transition:all .18s;" + viewTableChip.style)}, t.view.table),
         h('button', {onClick:viewCardsChip.onClick, style:css("border-radius:8px;padding:7px 14px;font-size:12.5px;font-family:inherit;cursor:pointer;transition:all .18s;" + viewCardsChip.style)}, t.view.cards))),
@@ -70,5 +60,7 @@ export default function Alerts({ t, alerts, fRisk, fStatus, fType, q, alertsView
                 h('span', {style:css("font-size:11px;font-weight:700;padding:3px 9px;border-radius:7px;" + a.riskStyle)}, a.riskLabel),
                 h('span', {style:css("font-size:11px;font-weight:600;padding:3px 9px;border-radius:7px;" + a.statusStyle)}, a.statusLabel)),
               h('span', {style:css("font-size:18px;font-weight:800;font-family:'JetBrains Mono',monospace;color:" + a.scoreColor + ";")}, String(a.score)))))))
+    ,
+    h(Pagination, {t, page, total, pageSize:PAGE, onPage, loading})
   );
 }

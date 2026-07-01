@@ -60,10 +60,16 @@ export async function loginRequest(username, password){
 }
 
 // Высокоуровневые вызовы домена.
-export const fetchAlerts = () => getJSON(API + '/alerts/?limit=1000');
-export const fetchWallets = () => getJSON(API + '/wallets/');
-export const fetchTransactions = () => getJSON(API + '/transactions/');
+// Списки пагинируются (limit/offset) и фильтруются на сервере. Ответ:
+// { count, next, previous, results }. params — объект query-параметров.
+const _q = (params) => new URLSearchParams(params).toString();
+export const fetchAlertsPage = (params) => getJSON(API + '/alerts/?' + _q(params));
+export const fetchWalletsPage = (params) => getJSON(API + '/wallets/?' + _q(params));
+export const fetchTransactionsPage = (params) => getJSON(API + '/transactions/?' + _q(params));
+// Правил мало — отдаются полным списком (массив).
 export const fetchRules = () => getJSON(API + '/rules/');
+// Агрегаты для дашборда считаются на сервере (не требуют загрузки всех алертов).
+export const fetchStats = () => getJSON(API + '/stats/');
 export const fetchMe = () => getJSON(API + '/auth/me/');
 export const fetchAlertDetail = (id) => getJSON(API + '/alerts/' + id + '/');
 export const setAlertStatus = (id, status) => patchJSON(API + '/alerts/' + id + '/status/', {status});

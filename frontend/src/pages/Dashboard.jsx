@@ -1,31 +1,36 @@
 import { h, css } from '../lib/dom';
 import { areaChart, barChart, donut, semiGauge } from '../lib/charts';
-import { computeStats, trendSeries } from '../lib/stats';
 import { alertVM } from '../lib/viewmodels';
 
-export default function Dashboard({ t, alerts, wallets, openAlert }){
-  const stats = computeStats(alerts, wallets);
+// Дашборд берёт агрегаты с сервера (/api/stats/) — это не требует загрузки всех
+// алертов на клиент и остаётся точным при пагинации. Список «последние» — из уже
+// загруженной первой страницы алертов.
+export default function Dashboard({ t, stats, alerts, openAlert }){
+  const s = stats || {by_status:{}, by_level:{}, trend:[], total_alerts:0, alerts_last_24h:0, flagged_wallets:0};
+  const bs = s.by_status || {}, bl = s.by_level || {};
   const statCards = [
-    {label:t.stats.total, value:stats.total},
-    {label:t.stats.open, value:stats.open},
-    {label:t.stats.in_progress, value:stats.in_progress},
-    {label:t.stats.closed, value:stats.closed},
-    {label:t.stats.false_positive, value:stats.false_positive},
-    {label:t.stats.last24, value:stats.last24},
+    {label:t.stats.total, value:s.total_alerts || 0},
+    {label:t.stats.open, value:bs.open || 0},
+    {label:t.stats.in_progress, value:bs.in_progress || 0},
+    {label:t.stats.closed, value:bs.closed || 0},
+    {label:t.stats.false_positive, value:bs.false_positive || 0},
+    {label:t.stats.last24, value:s.alerts_last_24h || 0},
   ];
   const riskItems = [
-    {label:t.risk.high, value:stats.high, color:'#ff6f6f'},
-    {label:t.risk.medium, value:stats.medium, color:'#f5b54a'},
-    {label:t.risk.low, value:stats.low, color:'#34d399'},
+    {label:t.risk.high, value:bl.high || 0, color:'#ff6f6f'},
+    {label:t.risk.medium, value:bl.medium || 0, color:'#f5b54a'},
+    {label:t.risk.low, value:bl.low || 0, color:'#34d399'},
   ];
-  const riskTotal = stats.high + stats.medium + stats.low;
+  const riskTotal = riskItems.reduce((a, r) => a + r.value, 0);
   const statusBarItems = [
-    {label:t.status.open, value:stats.open, color:'#f5b54a'},
-    {label:t.status.in_progress, value:stats.in_progress, color:'#5fded0'},
-    {label:t.status.closed, value:stats.closed, color:'#34d399'},
-    {label:t.status.false_positive, value:stats.false_positive, color:'#9aa3b2'},
+    {label:t.status.open, value:bs.open || 0, color:'#f5b54a'},
+    {label:t.status.in_progress, value:bs.in_progress || 0, color:'#5fded0'},
+    {label:t.status.closed, value:bs.closed || 0, color:'#34d399'},
+    {label:t.status.false_positive, value:bs.false_positive || 0, color:'#9aa3b2'},
   ];
-  const closedPct = stats.total ? (stats.closed + stats.false_positive) / stats.total : 0;
+  const total = s.total_alerts || 0;
+  const closedPct = total ? ((bs.closed || 0) + (bs.false_positive || 0)) / total : 0;
+  const trend = (s.trend && s.trend.length) ? s.trend : [0];
   const recent = alerts.slice(0, 8).map(a => alertVM(a, {t, openAlert}));
 
   return h('div', {style:css("height:100%;overflow-y:auto;overflow-x:hidden;padding:24px;")},
@@ -39,7 +44,7 @@ export default function Dashboard({ t, alerts, wallets, openAlert }){
         h('div', {style:css("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px;")},
           h('div', {style:css("font-size:15px;font-weight:700;")}, t.dash.trend),
           h('div', {style:css("font-size:12px;color:var(--muted);")}, t.dash.trendSub)),
-        areaChart(trendSeries(alerts), 190)),
+        areaChart(trend, 190)),
       h('div', {style:css("background:var(--card);border:1px solid var(--border);border-radius:18px;padding:20px;")},
         h('div', {style:css("font-size:15px;font-weight:700;margin-bottom:10px;")}, t.dash.riskDist),
         h('div', {style:css("display:flex;align-items:center;gap:16px;")},
@@ -54,7 +59,7 @@ export default function Dashboard({ t, alerts, wallets, openAlert }){
               h('span', {style:css("font-weight:700;font-family:'JetBrains Mono',monospace;")}, String(r.value)))),
             h('div', {style:css("display:flex;align-items:center;gap:8px;font-size:13px;border-top:1px solid var(--border);padding-top:9px;margin-top:2px;")},
               h('span', {style:css("color:var(--muted);flex:1;")}, t.dash.flagged),
-              h('span', {style:css("font-weight:700;font-family:'JetBrains Mono',monospace;color:#ff6f6f;")}, String(stats.flagged))))))),
+              h('span', {style:css("font-weight:700;font-family:'JetBrains Mono',monospace;color:#ff6f6f;")}, String(s.flagged_wallets || 0))))))),
 
     h('div', {style:css("display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;")},
       h('div', {style:css("background:var(--card);border:1px solid var(--border);border-radius:18px;padding:20px;display:flex;flex-direction:column;min-height:0;")},
