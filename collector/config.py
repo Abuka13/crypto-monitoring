@@ -1,8 +1,4 @@
-"""Загрузка конфигурации из .env.
-
-Секреты (API-ключ, строка подключения к БД) НЕ хардкодятся в коде —
-берутся из переменных окружения. Шаблон значений — в .env.example.
-"""
+"""Конфигурация из .env (секреты не хардкодятся)."""
 from __future__ import annotations
 
 import os
@@ -10,49 +6,33 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-# Подхватываем .env из корня проекта (если он есть).
 load_dotenv()
 
 
 class ConfigError(RuntimeError):
-    """Не хватает обязательной переменной окружения."""
+    """Нет обязательной переменной окружения."""
 
 
 def _required(name: str) -> str:
     value = os.getenv(name)
     if not value:
-        raise ConfigError(
-            f"Не задана переменная окружения {name}. "
-            f"Скопируй .env.example в .env и впиши значение."
-        )
+        raise ConfigError(f"Не задана переменная {name} (см. .env.example).")
     return value
 
 
-# 1 ETH = 10^18 wei — базовая единица для порогов сумм.
-ETH = 10 ** 18
+ETH = 10 ** 18  # 1 ETH в wei
 
 
 @dataclass(frozen=True)
 class RiskConfig:
-    """Пороги Rule Engine. Все суммы — в wei (int), без float.
+    """Пороги Rule Engine (wei как int). Меняются через .env без правки кода."""
 
-    Вынесены в конфиг/.env, чтобы менять чувствительность правил без правки кода
-    (сами правила-условия живут в risk/rules.py).
-    """
-
-    # «Большая сумма»: порог (по умолчанию 10 ETH).
-    large_amount_threshold_wei: int
-
-    # «Новый кошелёк»: создан не давнее N дней и при этом крупный оборот.
-    new_wallet_max_age_days: int
-
-    # «Высокая частота»: >= N транзакций в окне из M часов.
-    high_frequency_count: int
-    high_frequency_window_hours: int
-
-    # «Дробление сумм»: >= N операций не крупнее порога (structuring).
-    structuring_small_amount_wei: int
-    structuring_min_count: int
+    large_amount_threshold_wei: int          # «Большая сумма»
+    new_wallet_max_age_days: int             # «Новый кошелёк»: возраст
+    high_frequency_count: int                # «Высокая частота»: N транзакций
+    high_frequency_window_hours: int         #   в окне M часов
+    structuring_small_amount_wei: int        # «Дробление»: порог мелкой суммы
+    structuring_min_count: int               #   и минимум таких операций
 
     @staticmethod
     def load() -> "RiskConfig":
@@ -61,11 +41,10 @@ class RiskConfig:
                 os.getenv("RISK_LARGE_AMOUNT_WEI", str(10 * ETH))
             ),
             new_wallet_max_age_days=int(os.getenv("RISK_NEW_WALLET_MAX_AGE_DAYS", "30")),
-            # Дефолты откалиброваны под поток mainnet (были 10/10 — слишком чувствительны).
             high_frequency_count=int(os.getenv("RISK_HIGH_FREQ_COUNT", "50")),
             high_frequency_window_hours=int(os.getenv("RISK_HIGH_FREQ_WINDOW_HOURS", "24")),
             structuring_small_amount_wei=int(
-                os.getenv("RISK_STRUCTURING_SMALL_WEI", str(ETH // 100))  # 0.01 ETH
+                os.getenv("RISK_STRUCTURING_SMALL_WEI", str(ETH // 100))
             ),
             structuring_min_count=int(os.getenv("RISK_STRUCTURING_MIN_COUNT", "30")),
         )
@@ -75,12 +54,9 @@ class RiskConfig:
 class Config:
     database_url: str
     etherscan_api_key: str
-    # Etherscan перешёл на единый multichain-эндпоинт V2 (chainid выбирает сеть).
-    etherscan_base_url: str
+    etherscan_base_url: str        # V2 multichain-эндпоинт
     etherscan_chain_id: int
-    # Лимит бесплатного ключа — ~5 запросов в секунду. Берём с запасом.
-    requests_per_second: float
-    # Пороги Rule Engine.
+    requests_per_second: float     # лимит бесплатного ключа ~5/с
     risk: RiskConfig
 
     @staticmethod

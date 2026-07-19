@@ -23,7 +23,8 @@ export function walletVM(w, ctx){
   const t = ctx.t;
   const bk = riskBucket(w.risk_score); const rm = RISK[bk];
   const lbl = w.label ? (t.labels[w.label] || w.label) : t.labels.none;
-  const lblColor = (w.label === 'mixer' || w.label === 'миксер') ? '#ff6f6f'
+  const lblColor = (w.label === 'sanctioned') ? '#c05bff'
+    : (w.label === 'mixer' || w.label === 'миксер') ? '#ff6f6f'
     : (w.label === 'fraud' || w.label === 'мошенник') ? '#f5b54a'
     : (w.label === 'exchange' || w.label === 'биржа') ? '#5fded0' : '#9aa3b2';
   return {

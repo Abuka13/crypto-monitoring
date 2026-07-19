@@ -40,7 +40,9 @@ CREATE TABLE wallet (
 
     risk_score          NUMERIC(6, 2) NOT NULL DEFAULT 0,   -- агрегированный риск 0..100
     is_flagged          BOOLEAN      NOT NULL DEFAULT FALSE,
-    label               VARCHAR(50),                        -- биржа / миксер / мошенник / NULL
+    label               VARCHAR(50),                        -- mixer / exchange / sanctioned / fraud / NULL
+    label_source        VARCHAR(50),                        -- ofac_sdn / public_known / etherscan_tag / manual
+    labeled_at          TIMESTAMPTZ,                        -- когда проставлена метка
 
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -204,4 +206,5 @@ INSERT INTO rule (name, description, score, is_active) VALUES
     ('Новый кошелёк',         'Кошелёк создан недавно и сразу проводит крупные операции',  20.00, TRUE),
     ('Высокая частота',       'Большое число операций за короткий промежуток времени',     25.00, TRUE),
     ('Связь с миксером',      'Один из участников помечен как миксер',                      40.00, TRUE),
-    ('Дробление сумм',        'Множество мелких операций (возможный structuring)',          35.00, TRUE);
+    ('Дробление сумм',        'Множество мелких операций (возможный structuring)',          35.00, TRUE),
+    ('Санкционный адрес',     'Отправитель или получатель в санкционном списке (OFAC SDN)', 50.00, TRUE);

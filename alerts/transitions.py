@@ -1,17 +1,10 @@
-"""Допустимые переходы статуса алерта (Шаг 5 docs/architecture.md).
-
-Жизненный цикл:
-    open ──► in_progress ──► closed
-                 │      └───► false_positive
-                 └──► open   (откат в работу)
-
-closed и false_positive — терминальные: дальнейших переходов нет.
-"""
+"""Переходы статуса алерта: open → in_progress → closed/false_positive
+(+ откат in_progress → open). closed/false_positive — терминальные."""
 from __future__ import annotations
 
 VALID_STATUSES = {"open", "in_progress", "closed", "false_positive"}
 
-# Из какого статуса в какие можно перейти.
+# Разрешённые переходы из статуса.
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "open": {"in_progress"},
     "in_progress": {"closed", "false_positive", "open"},

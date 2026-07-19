@@ -1,14 +1,5 @@
-"""Модели поверх СУЩЕСТВУЮЩЕЙ схемы (db/schema.sql).
-
-Все модели — managed = False: источник истины это db/schema.sql со всеми
-CHECK-ограничениями и типами NUMERIC(40,0) для wei. Django НЕ создаёт и не
-меняет эти 7 таблиц (makemigrations их игнорирует, migrate не трогает).
-По сути это очищенный результат `python manage.py inspectdb`.
-
-Денежные поля — DecimalField(max_digits=40, decimal_places=0): соответствуют
-NUMERIC(40,0) и хранят wei без потери точности. В JSON они отдаются строками
-(см. settings.COERCE_DECIMAL_TO_STRING и сериализаторы).
-"""
+"""Модели поверх существующей схемы (db/schema.sql), managed=False — Django их
+не создаёт и не меняет. wei -> DecimalField(40,0) (в JSON строкой)."""
 from django.db import models
 
 
@@ -37,7 +28,9 @@ class Wallet(models.Model):
     total_sent = models.DecimalField(max_digits=40, decimal_places=0)      # wei
     risk_score = models.DecimalField(max_digits=6, decimal_places=2)
     is_flagged = models.BooleanField()
-    label = models.CharField(max_length=50, null=True, blank=True)
+    label = models.CharField(max_length=50, null=True, blank=True)          # mixer/exchange/sanctioned/fraud
+    label_source = models.CharField(max_length=50, null=True, blank=True)   # ofac_sdn/public_known/etherscan_tag/manual
+    labeled_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
 

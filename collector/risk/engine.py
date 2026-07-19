@@ -1,16 +1,7 @@
-"""Оркестрация Rule Engine.
+"""Оркестрация Rule Engine (шаги 2–4 из docs/architecture.md).
 
-Шаги 2–4 из docs/architecture.md:
-  - применяем активные правила к транзакциям и кошелькам;
-  - rule_score = сумма баллов сработавших правил; ml_score = 0; final = rule_score;
-  - пишем НОВУЮ строку в transaction_risk / wallet_risk (история, не перезапись);
-  - для кошелька обновляем wallet.risk_score и is_flagged;
-  - при final_score >= HIGH (50) создаём alert с причиной из сработавших правил.
-
-Две точки входа:
-  - score_risk(conn, cfg)                  — пересчитать ВСЮ базу;
-  - score_block(conn, cfg, net, block)     — инкрементально, только данные блока
-                                             (для конвейера слежения --follow --score).
+Применяет правила -> пишет оценку риска (история) -> при уровне не LOW создаёт/
+обновляет alert. Точки входа: score_risk (вся база), score_block (один блок).
 """
 from __future__ import annotations
 
@@ -30,11 +21,11 @@ log = logging.getLogger(__name__)
 class RiskStats:
     tx_evaluated: int = 0
     tx_risk_rows: int = 0
-    tx_alerts: int = 0            # новые алерты по транзакциям
-    tx_alerts_updated: int = 0    # обновлённые (дедуп: активный уже был)
+    tx_alerts: int = 0            # новые
+    tx_alerts_updated: int = 0    # обновлённые (дедуп)
     wallets_evaluated: int = 0
     wallet_risk_rows: int = 0
-    wallet_alerts: int = 0        # новые алерты по кошелькам
+    wallet_alerts: int = 0
     wallet_alerts_updated: int = 0
     wallets_flagged: int = 0
     skipped_rules: list[str] = field(default_factory=list)
@@ -55,12 +46,7 @@ def _reason(fired: list[tuple[str, Decimal]]) -> str:
 
 
 def _emit_or_refresh_alert(conn, *, target_type, object_id, risk_id, title, description, level) -> str:
-    """Создать алерт, либо обновить существующий активный (дедуп по объекту).
-
-    Один активный (open/in_progress) алерт на объект: если он уже есть — обновляем
-    его свежей оценкой, а не плодим дубль. Новый алерт появится только после того,
-    как предыдущий закрыт (closed/false_positive). Возвращает 'created' | 'updated'.
-    """
+    """Дедуп по объекту: обновить активный алерт или создать новый. -> 'created'|'updated'."""
     if target_type == "wallet":
         active = db.find_active_alert_for_wallet(conn, object_id)
     else:
@@ -93,9 +79,7 @@ def _load_rules(conn, stats: RiskStats):
     return tx_rules, wallet_rules
 
 
-# ----------------------------------------------------------------------
-# Полный пересчёт по всей базе
-# ----------------------------------------------------------------------
+# ---- Полный пересчёт по всей базе ----
 def score_risk(conn, cfg: RiskConfig) -> RiskStats:
     stats = RiskStats()
     tx_rules, wallet_rules = _load_rules(conn, stats)
@@ -108,16 +92,9 @@ def score_risk(conn, cfg: RiskConfig) -> RiskStats:
     return stats
 
 
-# ----------------------------------------------------------------------
-# Инкрементальный пересчёт: только данные одного блока
-# ----------------------------------------------------------------------
+# ---- Инкрементальный пересчёт: только данные одного блока ----
 def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int) -> RiskStats:
-    """Оценить риск только по транзакциям блока и затронутым им кошелькам.
-
-    Не пересчитывает всю базу — поэтому пригоден для конвейера реального времени
-    (--follow --score). Кошельки оцениваются по своей полной истории, но в выборку
-    попадают лишь участники этого блока.
-    """
+    """Риск только по tx блока и затронутым кошелькам (для --follow --score)."""
     stats = RiskStats()
     tx_rules, wallet_rules = _load_rules(conn, stats)
 
@@ -132,9 +109,7 @@ def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int) -> Ri
     return stats
 
 
-# ----------------------------------------------------------------------
-# Общие помощники (используются и полным, и инкрементальным расчётом)
-# ----------------------------------------------------------------------
+# ---- Общие помощники (полный и инкрементальный расчёт) ----
 def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None:
     for tx_id, amount, sender_label, receiver_label in rows:
         facts = TxFacts(
@@ -149,7 +124,7 @@ def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None
             if rules.TX_RULES[rule.name](facts, cfg)
         ]
         rule_score = sum((s for _, s in fired), Decimal(0))
-        final_score = rule_score  # ml_score = 0 на первом этапе
+        final_score = rule_score  # ml_score = 0
         risk_level = rules.level_from_score(final_score)
 
         risk_id = db.insert_transaction_risk(

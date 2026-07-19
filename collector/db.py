@@ -1,8 +1,4 @@
-"""Доступ к PostgreSQL: подключение и репозиторий кошельков/транзакций.
-
-Денежные суммы (wei) передаются как Python int и ложатся в NUMERIC(40,0)
-без потери точности — никаких float.
-"""
+"""Доступ к PostgreSQL (raw psycopg2). wei — Python int -> NUMERIC, без float."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,32 +10,23 @@ import psycopg2.extensions
 
 
 def connect(database_url: str) -> psycopg2.extensions.connection:
-    """Открыть подключение к БД по строке вида postgresql://user:pass@host/db."""
     return psycopg2.connect(database_url)
 
 
 def get_network_id(conn, name: str) -> int:
-    """id сети из blockchain_network по имени (например, 'Ethereum')."""
+    """id сети из blockchain_network по имени."""
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM blockchain_network WHERE name = %s", (name,))
         row = cur.fetchone()
     if row is None:
-        raise ValueError(
-            f"Сеть '{name}' не найдена в blockchain_network. "
-            f"Сначала примени db/schema.sql (там есть стартовые данные)."
-        )
+        raise ValueError(f"Сеть '{name}' не найдена — примени db/schema.sql.")
     return row[0]
 
 
 def find_or_create_wallet(
     conn, network_id: int, address: str, seen_at: datetime
 ) -> int:
-    """Вернуть id кошелька, создав запись при первом появлении адреса.
-
-    Кошельки обязаны существовать ДО вставки транзакции из-за внешних ключей
-    sender_wallet_id / receiver_wallet_id. Адрес приводим к нижнему регистру,
-    чтобы один и тот же кошелёк не задвоился из-за разного регистра hex.
-    """
+    """id кошелька, создавая при первом появлении (адрес в нижнем регистре)."""
     address = address.lower()
     with conn.cursor() as cur:
         cur.execute(
@@ -50,7 +37,6 @@ def find_or_create_wallet(
         if row is not None:
             return row[0]
 
-        # Записи нет — создаём. ON CONFLICT защищает от гонки при параллельном сборе.
         cur.execute(
             """
             INSERT INTO wallet (address, network_id, first_seen_at, last_seen_at)
@@ -64,7 +50,7 @@ def find_or_create_wallet(
         if row is not None:
             return row[0]
 
-        # Кто-то успел вставить между SELECT и INSERT — перечитываем.
+        # Гонка: вставили между SELECT и INSERT — перечитываем.
         cur.execute(
             "SELECT id FROM wallet WHERE network_id = %s AND address = %s",
             (network_id, address),
@@ -86,12 +72,7 @@ def insert_transaction(
     status: str,
     currency: str = "ETH",
 ) -> int | None:
-    """Вставить транзакцию в tx.
-
-    Возвращает id новой строки, либо None, если такая транзакция уже была
-    (уникальность по network_id + tx_hash). None — сигнал не трогать агрегаты,
-    чтобы повторный запуск сбора не задваивал суммы.
-    """
+    """Вставить транзакцию. None если дубль (не трогать агрегаты при повторе)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -122,13 +103,7 @@ def update_wallet_aggregates(
     amount_wei: int,
     timestamp: datetime,
 ) -> None:
-    """Обновить агрегаты обоих кошельков после новой транзакции.
-
-    Отправитель: +amount к total_sent. Получатель: +amount к total_received.
-    Обоим: +1 к transaction_count и last_seen_at = max(last_seen_at, ts).
-    Случай sender == receiver (перевод самому себе) учитывается отдельно,
-    чтобы не посчитать транзакцию дважды.
-    """
+    """Агрегаты кошельков: +sent/+received, +1 count, last_seen. self-tx — отдельно."""
     with conn.cursor() as cur:
         if sender_wallet_id == receiver_wallet_id:
             cur.execute(
@@ -169,9 +144,7 @@ def update_wallet_aggregates(
         )
 
 
-# ======================================================================
-#  Rule Engine: правила, оценки риска, алерты
-# ======================================================================
+# ---- Rule Engine: правила, оценки риска, алерты ----
 
 @dataclass(frozen=True)
 class Rule:
@@ -182,7 +155,7 @@ class Rule:
 
 
 def get_active_rules(conn) -> list[Rule]:
-    """Все включённые правила (is_active = TRUE) из таблицы rule."""
+    """Включённые правила (is_active = TRUE)."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, name, description, score FROM rule "
@@ -192,10 +165,7 @@ def get_active_rules(conn) -> list[Rule]:
 
 
 def get_transactions_for_scoring(conn) -> list[tuple]:
-    """Транзакции вместе с метками кошельков-участников (для правил уровня tx).
-
-    Возвращает кортежи (tx_id, amount, sender_label, receiver_label).
-    """
+    """Все tx с метками кошельков: (tx_id, amount, sender_label, receiver_label)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -210,7 +180,7 @@ def get_transactions_for_scoring(conn) -> list[tuple]:
 
 
 def get_wallets_for_scoring(conn) -> list[tuple]:
-    """Кошельки (id, address, first_seen_at, label) для правил уровня кошелька."""
+    """Все кошельки: (id, address, first_seen_at, label)."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, address, first_seen_at, label FROM wallet ORDER BY id"
@@ -218,10 +188,10 @@ def get_wallets_for_scoring(conn) -> list[tuple]:
         return cur.fetchall()
 
 
-# --- Инкрементальный расчёт: выборки только по одному блоку ---
+# ---- Инкрементальный расчёт: выборки по одному блоку ----
 
 def get_transactions_for_scoring_by_block(conn, network_id: int, block_number: int) -> list[tuple]:
-    """Транзакции одного блока (id, amount, sender_label, receiver_label)."""
+    """tx одного блока: (id, amount, sender_label, receiver_label)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -238,7 +208,7 @@ def get_transactions_for_scoring_by_block(conn, network_id: int, block_number: i
 
 
 def get_affected_wallet_ids_by_block(conn, network_id: int, block_number: int) -> list[int]:
-    """id кошельков, участвовавших в блоке (как отправители или получатели)."""
+    """id кошельков — участников блока."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -252,7 +222,7 @@ def get_affected_wallet_ids_by_block(conn, network_id: int, block_number: int) -
 
 
 def get_wallets_for_scoring_by_ids(conn, wallet_ids: list[int]) -> list[tuple]:
-    """Кошельки (id, address, first_seen_at, label) по списку id."""
+    """Кошельки по списку id: (id, address, first_seen_at, label)."""
     if not wallet_ids:
         return []
     with conn.cursor() as cur:
@@ -264,7 +234,7 @@ def get_wallets_for_scoring_by_ids(conn, wallet_ids: list[int]) -> list[tuple]:
 
 
 def get_wallet_tx_history(conn, wallet_id: int) -> list[tuple]:
-    """История (timestamp, amount) транзакций кошелька — как отправителя и получателя."""
+    """(timestamp, amount) всех транзакций кошелька."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -282,7 +252,7 @@ def insert_transaction_risk(
     conn, *, transaction_id: int, rule_score: Decimal,
     ml_score: Decimal, final_score: Decimal, risk_level: str,
 ) -> int:
-    """Записать новую оценку риска транзакции (история — не перезаписываем старые)."""
+    """Новая оценка риска транзакции (история)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -300,7 +270,7 @@ def insert_wallet_risk(
     conn, *, wallet_id: int, rule_score: Decimal,
     ml_score: Decimal, final_score: Decimal, risk_level: str,
 ) -> int:
-    """Записать новую оценку риска кошелька (история)."""
+    """Новая оценка риска кошелька (история)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -317,7 +287,7 @@ def insert_wallet_risk(
 def update_wallet_risk_summary(
     conn, *, wallet_id: int, risk_score: Decimal, is_flagged: bool
 ) -> None:
-    """Обновить агрегированный риск кошелька (risk_score, is_flagged)."""
+    """Снимок риска кошелька (risk_score, is_flagged)."""
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE wallet SET risk_score = %s, is_flagged = %s, updated_at = now() "
@@ -330,7 +300,7 @@ def insert_alert(
     conn, *, target_type: str, title: str, description: str, level: str,
     transaction_risk_id: int | None = None, wallet_risk_id: int | None = None,
 ) -> int:
-    """Создать алерт, ссылающийся ровно на один источник риска (CHECK в схеме)."""
+    """Создать алерт (ровно один источник риска — гарантирует CHECK)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -346,13 +316,12 @@ def insert_alert(
         return cur.fetchone()[0]
 
 
-# Таблицы с собранными/посчитанными данными. Справочники blockchain_network
-# и rule сюда НЕ входят — они сохраняются при очистке.
+# Очищаемые таблицы (справочники blockchain_network и rule не входят).
 _DATA_TABLES = ("alert", "transaction_risk", "wallet_risk", "tx", "wallet")
 
 
 def count_data_tables(conn) -> dict[str, int]:
-    """Сколько строк сейчас в очищаемых таблицах (для предпросмотра)."""
+    """Число строк в очищаемых таблицах (предпросмотр)."""
     counts: dict[str, int] = {}
     with conn.cursor() as cur:
         for table in _DATA_TABLES:
@@ -362,12 +331,7 @@ def count_data_tables(conn) -> dict[str, int]:
 
 
 def reset_data(conn) -> dict[str, int]:
-    """Очистить таблицы данных, сохранив справочники (blockchain_network, rule).
-
-    TRUNCATE ... RESTART IDENTITY CASCADE: разом чистит wallet/tx/оценки/алерты
-    и сбрасывает счётчики id. blockchain_network и rule не трогаются.
-    Возвращает, сколько строк было удалено из каждой таблицы.
-    """
+    """TRUNCATE данных (справочники сохраняются). Возвращает счётчики удалённого."""
     deleted = count_data_tables(conn)
     with conn.cursor() as cur:
         cur.execute(
@@ -378,10 +342,48 @@ def reset_data(conn) -> dict[str, int]:
     return deleted
 
 
-# --- Дедупликация алертов: один активный (open/in_progress) алерт на объект ---
+# ---- Метки адресов ----
+
+def upsert_wallet_label(
+    conn, network_id: int, address: str, label: str, source: str
+) -> str:
+    """Проставить метку адресу; кошелёк создаётся, если его ещё нет.
+
+    Идемпотентно. Возвращает 'created' | 'updated' | 'unchanged'.
+    """
+    address = address.lower()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, label, label_source FROM wallet WHERE network_id = %s AND address = %s",
+            (network_id, address),
+        )
+        row = cur.fetchone()
+        if row is None:
+            cur.execute(
+                """
+                INSERT INTO wallet (address, network_id, label, label_source, labeled_at)
+                VALUES (%s, %s, %s, %s, now())
+                ON CONFLICT (network_id, address) DO UPDATE
+                    SET label = EXCLUDED.label, label_source = EXCLUDED.label_source,
+                        labeled_at = now(), updated_at = now()
+                """,
+                (address, network_id, label, source),
+            )
+            return "created"
+        if row[1] == label and row[2] == source:
+            return "unchanged"
+        cur.execute(
+            "UPDATE wallet SET label=%s, label_source=%s, labeled_at=now(), updated_at=now() "
+            "WHERE id=%s",
+            (label, source, row[0]),
+        )
+        return "updated"
+
+
+# ---- Дедуп алертов: один активный (open/in_progress) на объект ----
 
 def find_active_alert_for_wallet(conn, wallet_id: int) -> int | None:
-    """id активного (open/in_progress) алерта по кошельку, иначе None."""
+    """id активного алерта по кошельку, иначе None."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -397,7 +399,7 @@ def find_active_alert_for_wallet(conn, wallet_id: int) -> int | None:
 
 
 def find_active_alert_for_transaction(conn, transaction_id: int) -> int | None:
-    """id активного (open/in_progress) алерта по транзакции, иначе None."""
+    """id активного алерта по транзакции, иначе None."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -416,11 +418,7 @@ def refresh_alert(
     conn, *, alert_id: int, target_type: str, risk_id: int,
     title: str, description: str, level: str,
 ) -> None:
-    """Обновить существующий активный алерт новой оценкой (без дубля).
-
-    Перецепляем на свежую строку риска, обновляем заголовок/описание/уровень и
-    время (created_at = now()). Статус НЕ трогаем — работа аналитика сохраняется.
-    """
+    """Обновить активный алерт свежей оценкой (статус не трогаем)."""
     with conn.cursor() as cur:
         if target_type == "wallet":
             cur.execute(
@@ -437,7 +435,7 @@ def refresh_alert(
 
 
 def get_sample_alerts(conn, limit: int = 5) -> list[tuple]:
-    """Несколько свежих открытых алертов для вывода в отчёте."""
+    """Свежие алерты для отчёта в CLI."""
     with conn.cursor() as cur:
         cur.execute(
             """

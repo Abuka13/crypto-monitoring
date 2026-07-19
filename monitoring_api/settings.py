@@ -1,11 +1,5 @@
-"""Настройки Django для REST API интерфейса аналитика.
-
-Принципы:
-- Подключаемся к УЖЕ существующей базе (db/schema.sql) через ту же DATABASE_URL.
-- Наши 7 таблиц описаны моделями с managed=False — Django их не создаёт и не меняет.
-- Служебные таблицы Django (миграции, сессии, auth) живут в той же базе, но
-  наших таблиц не касаются.
-"""
+"""Настройки Django. Подключается к той же БД (db/schema.sql); наши таблицы —
+managed=False (Django их не трогает, служебные таблицы — рядом)."""
 from __future__ import annotations
 
 import os
@@ -17,10 +11,8 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Та же конфигурация, что у CLI сбора данных (.env в корне проекта).
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env")  # та же конфигурация, что у CLI
 
-# --- Базовое ---
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-insecure-key-change-me")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
@@ -32,18 +24,16 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    # Сторонние
     "rest_framework",
-    "rest_framework_simplejwt.token_blacklist",  # для logout (отзыв refresh-токена)
+    "rest_framework_simplejwt.token_blacklist",  # logout: отзыв refresh
     "corsheaders",
     "django_filters",
     "drf_spectacular",
-    # Наше приложение
     "alerts",
 ]
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",  # как можно выше, до CommonMiddleware
+    "corsheaders.middleware.CorsMiddleware",  # выше CommonMiddleware
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -72,24 +62,18 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "monitoring_api.wsgi.application"
 
-# --- База данных: та же, что у сбора данных ---
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    raise RuntimeError(
-        "Не задана DATABASE_URL. Скопируй .env.example в .env и впиши значение."
-    )
+    raise RuntimeError("Не задана DATABASE_URL (см. .env.example).")
 DATABASES = {"default": dj_database_url.parse(DATABASE_URL)}
 
-# --- DRF ---
 REST_FRAMEWORK = {
-    # Аутентификация по JWT; доступ — только аутентифицированным (логин/refresh открыты явно).
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    # Пагинация по умолчанию: limit/offset (?limit=&offset=).
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 50,
     "DEFAULT_FILTER_BACKENDS": [
@@ -97,11 +81,10 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    # NUMERIC -> строка в JSON (это важно для wei: JS теряет точность на больших числах).
-    "COERCE_DECIMAL_TO_STRING": True,
+    "COERCE_DECIMAL_TO_STRING": True,  # wei -> строка (точность в JS)
 }
 
-# --- JWT (simplejwt). Время жизни токенов настраивается через .env. ---
+# JWT: время жизни токенов — из .env
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.getenv("JWT_ACCESS_MINUTES", "45"))),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.getenv("JWT_REFRESH_DAYS", "1"))),
@@ -111,24 +94,19 @@ SIMPLE_JWT = {
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Crypto Monitoring API — интерфейс аналитика",
-    "DESCRIPTION": (
-        "REST API для Шага 5: список алертов, детали «почему сработало», "
-        "смена статуса и сводка для дашборда. Все денежные суммы (wei) — строками."
-    ),
+    "DESCRIPTION": "REST API интерфейса аналитика. Денежные суммы (wei) — строками.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
-# --- CORS: на время разработки разрешаем локальный фронтенд на любом порту ---
+# CORS: локальный фронтенд на любом порту (+ можно расширить через .env)
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost:\d+$",
     r"^http://127\.0\.0\.1:\d+$",
 ]
-# Можно явно расширить список источников через .env (через запятую).
 _extra_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _extra_origins.split(",") if o.strip()]
 
-# --- Прочее ---
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True

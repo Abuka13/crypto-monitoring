@@ -1,10 +1,5 @@
-"""Вьюхи REST API интерфейса аналитика (Шаг 5).
-
-  GET   /api/alerts/                 — список (фильтры: status, level, target_type)
-  GET   /api/alerts/{id}/            — детали + «почему сработало»
-  PATCH /api/alerts/{id}/status/     — смена статуса (с проверкой переходов)
-  GET   /api/stats/                  — сводка для дашборда
-"""
+"""Вьюхи REST API интерфейса аналитика: алерты, кошельки, транзакции, правила,
+статистика, аутентификация. Маршруты — в alerts/urls.py."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -35,19 +30,16 @@ from .transitions import RESOLVING_STATUSES, validate_transition
 class AlertViewSet(viewsets.ReadOnlyModelViewSet):
     """Список и детали алертов (только чтение); смена статуса — отдельным action."""
 
-    # select_related: одним запросом тянем связанные оценки риска и объекты,
-    # чтобы не было N+1 при вычислении final_score и контекста.
     queryset = (
-        Alert.objects.select_related(
+        Alert.objects.select_related(  # против N+1 при final_score/контексте
             "transaction_risk__transaction__sender_wallet",
             "transaction_risk__transaction__receiver_wallet",
             "wallet_risk__wallet",
         )
         .all()
-        .order_by("-created_at")  # свежие сверху
+        .order_by("-created_at")
     )
-    # Фильтры через query-параметры (?status=&level=&target_type=&search=).
-    # Фильтрация серверная — номера страниц пагинации остаются корректными.
+    # Серверные фильтры/поиск (?status=&level=&target_type=&search=).
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["status", "level", "target_type"]
     search_fields = ["title", "description"]
@@ -154,8 +146,7 @@ class WalletViewSet(viewsets.ReadOnlyModelViewSet):
     # Пагинация (limit/offset) — чтобы сервер не отдавал десятки тысяч строк разом.
 
     def get_queryset(self):
-        # Фильтр по уровню риска (совпадает с делением на клиенте: >=70 high,
-        # >=40 medium, иначе low) — серверный, чтобы пагинация была корректной.
+        # Серверный фильтр по уровню риска (>=70 high, >=40 medium, иначе low).
         qs = super().get_queryset()
         risk = self.request.query_params.get("risk")
         if risk == "high":
@@ -240,8 +231,7 @@ def stats_view(request):
 
     since = timezone.now() - timedelta(hours=24)
 
-    # Тренд за 14 дней (счётчик алертов по дням) — считается на сервере, чтобы
-    # дашборду не требовалось грузить все алерты на клиент.
+    # Тренд за 14 дней (алертов по дням) — считается на сервере.
     days = 14
     start = timezone.now() - timedelta(days=days - 1)
     trend = [0] * days

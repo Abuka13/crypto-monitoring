@@ -1,10 +1,7 @@
-"""Правила Rule Engine: проверяемые условия + маппинг баллов в уровень риска.
+"""Правила Rule Engine: условия + уровни риска.
 
-Разделение ответственности:
-- таблица `rule` в БД хранит *название*, *балл* (score) и флаг активности;
-- здесь живёт *условие* каждого правила (как именно проверять).
-Правило из БД связывается с условием по имени (реестры TX_RULES / WALLET_RULES).
-Так баллы и включение правил меняются в БД, а логика — в коде.
+Балл и вкл/выкл правила — в таблице `rule`; условие — здесь. Связь по имени
+(реестры TX_RULES / WALLET_RULES): калибровка в БД, логика в коде.
 """
 from __future__ import annotations
 
@@ -14,29 +11,27 @@ from decimal import Decimal
 
 from ..config import RiskConfig
 
-# --- Имена правил (должны совпадать с rule.name в БД) ---
+# Имена правил (совпадают с rule.name в БД)
 RULE_LARGE_AMOUNT = "Большая сумма"
 RULE_MIXER = "Связь с миксером"
+RULE_SANCTIONED = "Санкционный адрес"
 RULE_NEW_WALLET = "Новый кошелёк"
 RULE_HIGH_FREQUENCY = "Высокая частота"
 RULE_STRUCTURING = "Дробление сумм"
 
-MIXER_LABEL = "миксер"
+# Коды меток кошельков (wallet.label). Метка "mixer" — технический факт,
+# "sanctioned" — регуляторный статус (OFAC SDN); это независимые вещи.
+LABEL_MIXER = "mixer"
+LABEL_EXCHANGE = "exchange"
+LABEL_SANCTIONED = "sanctioned"
+LABEL_FRAUD = "fraud"
 
-# Алерт создаётся, если балл ВЫШЕ этого порога (то есть уровень не LOW).
-# Балл <= 50 (LOW) остаётся оценкой риска, но алерт не порождает.
-ALERT_MIN_SCORE = Decimal(50)
-
-# risk_level (UPPER) -> alert.level (lower). Все четыре уровня поддержаны схемой.
+# risk_level -> alert.level (lower)
 _ALERT_LEVEL = {"LOW": "low", "MEDIUM": "medium", "HIGH": "high", "CRITICAL": "critical"}
 
 
 def level_from_score(score: Decimal) -> str:
-    """final_score -> risk_level.
-
-    Границы: 0–50 LOW · 51–70 MEDIUM · 71–80 HIGH · 81+ CRITICAL.
-    (50→LOW, 70→MEDIUM, 80→HIGH, 81→CRITICAL.)
-    """
+    """final_score -> risk_level: 0–50 LOW · 51–70 MEDIUM · 71–80 HIGH · 81+ CRITICAL."""
     if score > 80:
         return "CRITICAL"
     if score > 70:
@@ -52,13 +47,10 @@ def alert_creation_needed(risk_level: str) -> bool:
 
 
 def alert_level_from_risk_level(risk_level: str) -> str:
-    """risk_level (UPPER) -> alert.level (lower, включая critical)."""
     return _ALERT_LEVEL[risk_level]
 
 
-# ----------------------------------------------------------------------
-# Данные, к которым применяются правила
-# ----------------------------------------------------------------------
+# ---- Данные, к которым применяются правила ----
 @dataclass(frozen=True)
 class TxFacts:
     tx_id: int
@@ -73,32 +65,33 @@ class WalletFacts:
     address: str
     first_seen_at: datetime | None
     label: str | None
-    timestamps: list[datetime]   # время всех транзакций кошелька
-    amounts: list[int]           # суммы всех транзакций кошелька, wei
+    timestamps: list[datetime]   # время всех tx кошелька
+    amounts: list[int]           # суммы всех tx, wei
 
 
-# ----------------------------------------------------------------------
-# Условия правил уровня транзакции: (facts, cfg) -> bool
-# ----------------------------------------------------------------------
+# ---- Условия правил уровня транзакции: (facts, cfg) -> bool ----
 def _tx_large_amount(tx: TxFacts, cfg: RiskConfig) -> bool:
     return tx.amount_wei >= cfg.large_amount_threshold_wei
 
 
 def _tx_mixer(tx: TxFacts, cfg: RiskConfig) -> bool:
-    return MIXER_LABEL in (tx.sender_label, tx.receiver_label)
+    return LABEL_MIXER in (tx.sender_label, tx.receiver_label)
+
+
+def _tx_sanctioned(tx: TxFacts, cfg: RiskConfig) -> bool:
+    return LABEL_SANCTIONED in (tx.sender_label, tx.receiver_label)
 
 
 TX_RULES = {
     RULE_LARGE_AMOUNT: _tx_large_amount,
     RULE_MIXER: _tx_mixer,
+    RULE_SANCTIONED: _tx_sanctioned,
 }
 
 
-# ----------------------------------------------------------------------
-# Условия правил уровня кошелька: (facts, cfg) -> bool
-# ----------------------------------------------------------------------
+# ---- Условия правил уровня кошелька: (facts, cfg) -> bool ----
 def _wallet_new(w: WalletFacts, cfg: RiskConfig) -> bool:
-    """Кошелёк создан недавно и при этом ворочает крупными суммами."""
+    """Недавно создан + крупный оборот."""
     if w.first_seen_at is None:
         return False
     age = datetime.now(timezone.utc) - w.first_seen_at
@@ -108,12 +101,13 @@ def _wallet_new(w: WalletFacts, cfg: RiskConfig) -> bool:
 
 
 def _wallet_high_frequency(w: WalletFacts, cfg: RiskConfig) -> bool:
-    """Много транзакций в скользящем окне фиксированной ширины."""
+    """>= N транзакций в скользящем окне. Биржи исключены (легитимный поток)."""
+    if w.label == LABEL_EXCHANGE:
+        return False
     if len(w.timestamps) < cfg.high_frequency_count:
         return False
     window = timedelta(hours=cfg.high_frequency_window_hours)
     ts = sorted(w.timestamps)
-    # Скользящее окно: для каждого начала считаем, сколько операций попало в окно.
     start = 0
     for end in range(len(ts)):
         while ts[end] - ts[start] > window:
@@ -124,7 +118,9 @@ def _wallet_high_frequency(w: WalletFacts, cfg: RiskConfig) -> bool:
 
 
 def _wallet_structuring(w: WalletFacts, cfg: RiskConfig) -> bool:
-    """Дробление: много мелких (но ненулевых) операций — паттерн structuring."""
+    """>= N мелких ненулевых операций (structuring). Биржи исключены."""
+    if w.label == LABEL_EXCHANGE:
+        return False
     small = sum(
         1 for a in w.amounts if 0 < a <= cfg.structuring_small_amount_wei
     )

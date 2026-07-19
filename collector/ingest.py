@@ -1,13 +1,4 @@
-"""Приём транзакций в БД.
-
-Связывает источник данных (BlockchainSource) и хранилище (db). На каждую
-транзакцию выполняет шаг 1 из docs/architecture.md:
-  1) найти/создать кошельки отправителя и получателя (до вставки tx — FK);
-  2) вставить транзакцию;
-  3) обновить агрегаты кошельков.
-Каждая транзакция обрабатывается в отдельной транзакции БД: сбой на одной
-не откатывает уже сохранённые.
-"""
+"""Приём транзакций в БД: кошельки -> tx -> агрегаты (каждая в своей DB-транзакции)."""
 from __future__ import annotations
 
 import logging
@@ -44,7 +35,7 @@ def ingest_transactions(
     for tx in transactions:
         stats.seen += 1
         try:
-            # 1) кошельки должны существовать до вставки транзакции
+            # 1) кошельки — до вставки tx (внешние ключи)
             sender_id = db.find_or_create_wallet(
                 conn, network_id, tx.sender_address, tx.timestamp
             )
@@ -52,7 +43,7 @@ def ingest_transactions(
                 conn, network_id, tx.receiver_address, tx.timestamp
             )
 
-            # 2) сама транзакция
+            # 2) транзакция
             tx_id = db.insert_transaction(
                 conn,
                 network_id=network_id,
@@ -68,12 +59,11 @@ def ingest_transactions(
             )
 
             if tx_id is None:
-                # Дубликат: агрегаты не трогаем, иначе повторный сбор задвоит суммы.
-                conn.commit()
+                conn.commit()  # дубль: агрегаты не трогаем
                 stats.skipped += 1
                 continue
 
-            # 3) агрегаты кошельков — только для реально новой транзакции
+            # 3) агрегаты — только для новой транзакции
             db.update_wallet_aggregates(
                 conn,
                 sender_wallet_id=sender_id,

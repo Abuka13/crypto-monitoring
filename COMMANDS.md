@@ -77,6 +77,9 @@ python -m collector --follow --score --from-block 25431470 -v
 ## 3. Расчёт риска и генерация алертов (Rule Engine)
 
 ```powershell
+# применить метки адресов (миксеры/биржи/санкции) из data/labels_seed.json
+python -m collector --seed-labels
+
 # посчитать риск по уже собранным данным + показать примеры алертов
 python -m collector --score-risk -v
 ```

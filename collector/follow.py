@@ -1,13 +1,5 @@
-"""Режим слежения за вершиной блокчейна.
-
-Постоянно опрашивает последний блок сети и подтягивает новые блоки в БД, чтобы
-в системе стабильно появлялись свежие транзакции. Устойчив к сбоям: ошибка в
-одном цикле логируется, но цикл продолжается (сетевые ошибки и лимиты Etherscan
-уже обрабатываются адаптером с повторами).
-
-Курсор последнего обработанного блока хранится в файле состояния, поэтому после
-перезапуска слежение продолжается с того же места, а не с нуля.
-"""
+"""Слежение за вершиной блокчейна: тянет новые блоки в БД. Курсор в файле
+состояния (продолжает после перезапуска); сбой цикла не роняет слежение."""
 from __future__ import annotations
 
 import json
@@ -22,7 +14,7 @@ from .sources.base import BlockchainSource
 
 log = logging.getLogger(__name__)
 
-# Файл состояния в корне проекта (в git не попадает, см. .gitignore).
+# Файл состояния в корне проекта (в .gitignore).
 _STATE_PATH = Path(__file__).resolve().parent.parent / ".collector_state.json"
 
 
@@ -56,15 +48,10 @@ def run_follow(
     score: bool = False,
     risk_cfg: RiskConfig | None = None,
 ) -> int:
-    """Бесконечный цикл слежения. Останавливается по Ctrl+C.
+    """Цикл слежения (Ctrl+C — стоп).
 
-    from_block:
-      - задан       -> начать с этого блока (догон истории);
-      - иначе курсор -> продолжить с сохранённого места;
-      - иначе        -> начать с текущей вершины (только новые блоки вперёд).
-
-    score=True: после ингеста каждого блока инкрементально считается риск и
-    создаются алерты только по данным этого блока (конвейер реального времени).
+    from_block задан -> с него; иначе курсор -> с сохранённого; иначе -> с вершины.
+    score=True -> после каждого блока инкрементальный расчёт риска по его данным.
     """
     name = source.network_name
 
@@ -87,8 +74,7 @@ def run_follow(
         try:
             tip = source.get_latest_block_number()
             if tip <= cursor:
-                # Новых блоков пока нет — ждём.
-                time.sleep(poll_interval)
+                time.sleep(poll_interval)  # новых блоков нет
                 continue
 
             target = min(tip, cursor + max_blocks_per_cycle)
@@ -101,23 +87,22 @@ def run_follow(
                     "Блок %d обработан (%s); отставание от вершины: %d",
                     block, stats, tip - block,
                 )
-                # Конвейер реального времени: считаем риск только по этому блоку.
+                # Риск только по этому блоку (сбой расчёта не роняет сбор).
                 if score and stats.inserted:
                     try:
                         rstats = risk_engine.score_block(conn, risk_cfg, network_id, block)
                         log.info("Риск по блоку %d: %s", block, rstats)
-                    except Exception as exc:  # сбой расчёта не должен ронять сбор
+                    except Exception as exc:
                         conn.rollback()
                         log.error("Не удалось посчитать риск по блоку %d: %s", block, exc)
 
-            # Если сильно отстаём — не спим, догоняем следующим циклом.
-            if behind > max_blocks_per_cycle:
+            if behind > max_blocks_per_cycle:  # сильно отстаём — догоняем без паузы
                 continue
             time.sleep(poll_interval)
 
         except KeyboardInterrupt:
             print("\nОстановлено. Последний обработанный блок:", cursor)
             return 0
-        except Exception as exc:  # один сбойный цикл не должен ронять слежение
+        except Exception as exc:  # сбойный цикл не роняет слежение
             log.error("Сбой цикла слежения: %s. Повтор через %ss", exc, poll_interval)
             time.sleep(poll_interval)

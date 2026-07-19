@@ -1,0 +1,90 @@
+{
+  "_meta": {
+    "description": "Сид публичных меток адресов Ethereum. Применяется командой: python -m collector --seed-labels",
+    "actual_as_of": "2026-07-02",
+    "labels_codes": ["mixer", "exchange", "sanctioned", "fraud"],
+    "sources_codes": ["ofac_sdn", "public_known", "etherscan_tag", "manual"],
+    "sources": [
+      "OFAC SDN List (sanctionssearch.ofac.treas.gov) — санкционные крипто-адреса",
+      "Etherscan public name tags — пулы Tornado Cash, горячие кошельки бирж",
+      "OFAC сняла санкции с адресов Tornado Cash в марте 2025; сами адреса остаются миксером (технический факт)"
+    ],
+    "note": "Адреса включены только при высокой уверенности. Раздел sanctioned можно пополнять вручную из актуального SDN."
+  },
+  "labels": [
+    {
+      "address": "0x12D66f87A04A9E220743712cE6d9bB1B5616B8Fc",
+      "label": "mixer",
+      "source": "public_known",
+      "note": "Tornado.Cash: пул 0.1 ETH. Санкции OFAC сняты 03.2025 — метка техническая, не санкционная."
+    },
+    {
+      "address": "0x47CE0C6eD5B0Ce3d3A51fdb1C52DC66a7c3c2936",
+      "label": "mixer",
+      "source": "public_known",
+      "note": "Tornado.Cash: пул 1 ETH. Санкции OFAC сняты 03.2025."
+    },
+    {
+      "address": "0x910Cbd523D972eb0a6f4cAe4618aD62622b39DbF",
+      "label": "mixer",
+      "source": "public_known",
+      "note": "Tornado.Cash: пул 10 ETH. Санкции OFAC сняты 03.2025."
+    },
+    {
+      "address": "0xA160cdAB225685dA1d56aa342Ad8841c3b53f291",
+      "label": "mixer",
+      "source": "public_known",
+      "note": "Tornado.Cash: пул 100 ETH. Санкции OFAC сняты 03.2025."
+    },
+    {
+      "address": "0xd90e2f925DA726b50C4Ed8D0Fb90Ad053324F31b",
+      "label": "mixer",
+      "source": "public_known",
+      "note": "Tornado.Cash: Router (прокси для депозитов/выводов). Санкции OFAC сняты 03.2025."
+    },
+
+    {
+      "address": "0xF977814e90dA44bFA03b6295A0616a897441aceC",
+      "label": "exchange",
+      "source": "etherscan_tag",
+      "note": "Binance 8 — горячий кошелёк биржи."
+    },
+    {
+      "address": "0x28C6c06298d514Db089934071355E5743bf21d60",
+      "label": "exchange",
+      "source": "etherscan_tag",
+      "note": "Binance 14 — горячий кошелёк биржи."
+    },
+    {
+      "address": "0x71660c4005BA85c37ccec55d0C4493E66Fe775d3",
+      "label": "exchange",
+      "source": "etherscan_tag",
+      "note": "Coinbase 1 — горячий кошелёк биржи."
+    },
+    {
+      "address": "0x6cC5F688a315f3dC28A7781717a9A798a59fDA7b",
+      "label": "exchange",
+      "source": "etherscan_tag",
+      "note": "OKX — горячий кошелёк биржи."
+    },
+
+    {
+      "address": "0x098B716B8Aaf21512996dC57EB0615e2383E2f96",
+      "label": "sanctioned",
+      "source": "ofac_sdn",
+      "note": "Ronin Bridge Exploiter (Lazarus Group, КНДР). В SDN с 14.04.2022, санкции действуют."
+    },
+    {
+      "address": "0x53b6936513e738f44FB50d2b9476730C0Ab3Bfc1",
+      "label": "sanctioned",
+      "source": "ofac_sdn",
+      "note": "Lazarus Group (КНДР). В SDN с 22.04.2022, санкции действуют."
+    },
+    {
+      "address": "0x3Cffd56B47B7b41c56258D9C7731ABaDc360E073",
+      "label": "sanctioned",
+      "source": "ofac_sdn",
+      "note": "Lazarus Group (КНДР). В SDN с 04.2022, санкции действуют."
+    }
+  ]
+}

@@ -22,18 +22,22 @@ function detailVM(selected, kind, detailData, t){
           {k:t.f.hash, v:shorten(c.tx_hash, 10, 8), copy:c.tx_hash},
           {k:t.f.amount, v:weiToEth(c.amount, 4) + ' ETH'},
           {k:t.f.sender, v:shorten(c.sender_address), copy:c.sender_address},
+          c.sender_label ? {k:t.f.senderLabel, v:(t.labels[c.sender_label] || c.sender_label) + (c.sender_label_source ? ' · ' + (t.labelSources[c.sender_label_source] || c.sender_label_source) : '')} : null,
           {k:t.f.receiver, v:shorten(c.receiver_address), copy:c.receiver_address},
+          c.receiver_label ? {k:t.f.receiverLabel, v:(t.labels[c.receiver_label] || c.receiver_label) + (c.receiver_label_source ? ' · ' + (t.labelSources[c.receiver_label_source] || c.receiver_label_source) : '')} : null,
           {k:t.f.block, v:num(c.block_number)},
           {k:t.f.time, v:fmtDate(Date.parse(c.transaction_timestamp))},
-        ];
+        ].filter(Boolean);
       } else {
         ctxRows = [
           {k:t.f.address, v:shorten(c.address, 10, 8), copy:c.address},
+          c.label ? {k:t.f.label, v:(t.labels[c.label] || c.label)} : null,
+          c.label_source ? {k:t.f.labelSource, v:(t.labelSources[c.label_source] || c.label_source)} : null,
           {k:t.f.txcount, v:num(c.transaction_count)},
           {k:t.f.received, v:weiToEth(c.total_received, 3) + ' ETH'},
           {k:t.f.sent, v:weiToEth(c.total_sent, 3) + ' ETH'},
           {k:t.f.riskscore, v:String(Math.round(c.risk_score))},
-        ];
+        ].filter(Boolean);
       }
     }
     const actions = [];
@@ -61,11 +65,12 @@ function detailVM(selected, kind, detailData, t){
       gauge:ringGauge(sel.risk_score, rm.color), score:Math.round(sel.risk_score), scoreColor:rm.color,
       ctxRows:[
         {k:t.f.address, v:shorten(sel.address, 10, 8), copy:sel.address},
+        sel.label_source ? {k:t.f.labelSource, v:(t.labelSources[sel.label_source] || sel.label_source)} : null,
         {k:t.f.txcount, v:num(sel.transaction_count)},
         {k:t.f.received, v:weiToEth(sel.total_received, 3) + ' ETH'},
         {k:t.f.sent, v:weiToEth(sel.total_sent, 3) + ' ETH'},
         {k:t.f.flagged, v:sel.is_flagged ? t.yes : t.no},
-      ], fired:[], actions:[], hasActions:false, loadingCtx:false,
+      ].filter(Boolean), fired:[], actions:[], hasActions:false, loadingCtx:false,
     };
   }
   // tx
@@ -77,11 +82,13 @@ function detailVM(selected, kind, detailData, t){
     ctxRows:[
       {k:t.f.hash, v:shorten(x.tx_hash, 10, 8), copy:x.tx_hash},
       {k:t.f.sender, v:shorten(x.sender_address), copy:x.sender_address},
+      x.sender_label ? {k:t.f.senderLabel, v:(t.labels[x.sender_label] || x.sender_label)} : null,
       {k:t.f.receiver, v:shorten(x.receiver_address), copy:x.receiver_address},
+      x.receiver_label ? {k:t.f.receiverLabel, v:(t.labels[x.receiver_label] || x.receiver_label)} : null,
       {k:t.f.amount, v:weiToEth(x.amount, 4) + ' ETH'},
       {k:t.f.block, v:num(x.block_number)},
       {k:t.f.time, v:fmtDate(Date.parse(x.transaction_timestamp))},
-    ], fired:[], actions:[], hasActions:false, loadingCtx:false,
+    ].filter(Boolean), fired:[], actions:[], hasActions:false, loadingCtx:false,
   };
 }
 

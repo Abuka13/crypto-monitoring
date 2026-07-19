@@ -1,12 +1,4 @@
-"""Точка входа.
-
-Сбор данных:
-  python -m collector --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --max 25
-  python -m collector --block 19000000
-
-Расчёт риска по уже собранным данным (Rule Engine):
-  python -m collector --score-risk -v
-"""
+"""CLI: сбор данных, расчёт риска, слежение. См. COMMANDS.md."""
 from __future__ import annotations
 
 import argparse
@@ -45,6 +37,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Рассчитать риск и сгенерировать алерты по уже собранным данным",
     )
     group.add_argument(
+        "--seed-labels", action="store_true",
+        help="Применить метки адресов из data/labels_seed.json (идемпотентно)",
+    )
+    group.add_argument(
         "--reset-data", action="store_true",
         help="Очистить данные (wallet/tx/оценки/алерты), сохранив справочники "
              "blockchain_network и rule. Требует --yes для подтверждения.",
@@ -68,6 +64,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--score", action="store_true",
         help="Вместе с --follow: после каждого блока считать риск и алерты по его данным",
+    )
+    parser.add_argument(
+        "--labels-file", default=None,
+        help="Путь к сид-файлу меток (по умолчанию data/labels_seed.json)",
     )
     parser.add_argument(
         "--yes", action="store_true",
@@ -116,13 +116,42 @@ def _run_score_risk(conn, config) -> int:
 
     alerts = db.get_sample_alerts(conn, limit=5)
     if not alerts:
-        print("\nАлертов не создано (ни одна оценка не достигла порога HIGH=50).")
+        print("\nАлертов не создано (ни одна оценка не превысила порог 50).")
         return 0
 
     print(f"\nПримеры алертов (свежие {len(alerts)}):")
     for target_type, level, status, title, description, created_at in alerts:
         print(f"  [{level.upper():6}] [{status}] {title}")
         print(f"          цель: {target_type} | {description}")
+    return 0
+
+
+def _run_seed_labels(conn, args) -> int:
+    import json
+    from pathlib import Path
+
+    path = Path(args.labels_file or Path(__file__).resolve().parent.parent / "data" / "labels_seed.json")
+    if not path.exists():
+        print(f"Сид-файл не найден: {path}", file=sys.stderr)
+        return 2
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    entries = data.get("labels", [])
+    network_id = db.get_network_id(conn, "Ethereum")
+
+    # Счётчики по типу метки: {label: {created, updated, unchanged}}
+    report: dict[str, dict[str, int]] = {}
+    for e in entries:
+        outcome = db.upsert_wallet_label(
+            conn, network_id, e["address"], e["label"], e["source"]
+        )
+        report.setdefault(e["label"], {"created": 0, "updated": 0, "unchanged": 0})
+        report[e["label"]][outcome] += 1
+    conn.commit()
+
+    print(f"Метки применены из {path.name} (записей: {len(entries)}):")
+    for label, c in sorted(report.items()):
+        print(f"  {label:11}: создано={c['created']}, обновлено={c['updated']}, без изменений={c['unchanged']}")
     return 0
 
 
@@ -163,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
 
     conn = db.connect(config.database_url)
     try:
+        if args.seed_labels:
+            return _run_seed_labels(conn, args)
         if args.reset_data:
             return _run_reset(conn, args.yes)
         if args.follow:

@@ -1,11 +1,5 @@
-"""Сериализаторы API.
-
-Важно: денежные суммы (wei) отдаются СТРОКАМИ — большие числа не помещаются
-в JS number и потеряли бы точность. Баллы риска (0..100) — числами, они малы.
-
-Сработавшие правила берём из alert.description, как их формирует Rule Engine
-(формат: «Сработавшие правила: Имя (+балл); Имя (+балл)»).
-"""
+"""Сериализаторы API. wei -> строки (точность в JS); баллы риска — числа.
+Сработавшие правила парсим из alert.description."""
 from __future__ import annotations
 
 import re
@@ -16,10 +10,9 @@ from rest_framework import serializers
 from .models import Alert, Rule, Tx, Wallet
 from .transitions import VALID_STATUSES
 
-# Префикс, которым Rule Engine начинает описание (collector/risk/engine.py).
+# Формат описания от Rule Engine: «Сработавшие правила: Имя (+балл); ...».
+# Якорим на «(+число)» — имя может содержать свои скобки.
 _REASON_PREFIX = "Сработавшие правила:"
-# «Имя правила (+12.34)». Имя может содержать свои скобки, напр. «Большая сумма (тест)»,
-# поэтому якорим на «(+число)» — маркер балла, а не на любую скобку.
 _RULE_RE = re.compile(r"\s*(.+?)\s*\(\+([\d.]+)\)\s*(?:;|$)")
 
 
@@ -103,6 +96,10 @@ class AlertDetailSerializer(serializers.ModelSerializer):
                 "currency": tx.currency,
                 "sender_address": tx.sender_wallet.address,
                 "receiver_address": tx.receiver_wallet.address,
+                "sender_label": tx.sender_wallet.label,
+                "sender_label_source": tx.sender_wallet.label_source,
+                "receiver_label": tx.receiver_wallet.label,
+                "receiver_label_source": tx.receiver_wallet.label_source,
                 "block_number": tx.block_number,
                 "transaction_timestamp": tx.transaction_timestamp,
                 "status": tx.status,
@@ -117,6 +114,7 @@ class AlertDetailSerializer(serializers.ModelSerializer):
                 "risk_score": float(w.risk_score),
                 "is_flagged": w.is_flagged,
                 "label": w.label,
+                "label_source": w.label_source,
                 "first_seen_at": w.first_seen_at,
                 "last_seen_at": w.last_seen_at,
             }
@@ -139,7 +137,8 @@ class WalletSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wallet
         fields = [
-            "id", "address", "label", "transaction_count",
+            "id", "address", "label", "label_source", "labeled_at",
+            "transaction_count",
             "total_received", "total_sent", "risk_score", "is_flagged",
             "first_seen_at", "last_seen_at",
         ]
@@ -161,11 +160,14 @@ class TransactionSerializer(serializers.ModelSerializer):
     gas_fee = serializers.SerializerMethodField()
     sender_address = serializers.CharField(source="sender_wallet.address", read_only=True)
     receiver_address = serializers.CharField(source="receiver_wallet.address", read_only=True)
+    sender_label = serializers.CharField(source="sender_wallet.label", read_only=True, allow_null=True)
+    receiver_label = serializers.CharField(source="receiver_wallet.label", read_only=True, allow_null=True)
 
     class Meta:
         model = Tx
         fields = [
             "id", "tx_hash", "sender_address", "receiver_address",
+            "sender_label", "receiver_label",
             "amount", "gas_fee", "block_number", "transaction_timestamp",
             "status", "currency",
         ]

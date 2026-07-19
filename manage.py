@@ -1,9 +1,5 @@
 #!/usr/bin/env python
-"""Точка входа Django (REST API для интерфейса аналитика, Шаг 5).
-
-Отдельна от CLI сбора данных (python -m collector ...) — это разные процессы,
-друг друга не затрагивают. Работает с той же базой PostgreSQL.
-"""
+"""Точка входа Django (отдельна от CLI `python -m collector`; та же БД)."""
 import os
 import sys
 

@@ -1,12 +1,4 @@
-"""Корневая маршрутизация Django-проекта.
-
-  /              — SPA аналитика (собранная сборка Vite из frontend/dist/)
-  /assets/...    — статика сборки (JS/CSS с хешами)
-  /api/...       — REST API (см. alerts/urls.py)
-  /api/schema/   — OpenAPI-схема (drf-spectacular)
-  /api/docs/     — Swagger UI с описанием всех эндпоинтов
-  /admin/        — стандартная админка (для заведения пользователей-аналитиков)
-"""
+"""Корневая маршрутизация: / -> SPA (frontend/dist), /assets, /api, /api/docs, /admin."""
 import mimetypes
 from pathlib import Path
 
@@ -16,18 +8,14 @@ from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework.permissions import AllowAny
 
-# Фронтенд собирается командой `npm run build` в frontend/dist/.
+# Сборка фронтенда: `npm run build` -> frontend/dist/.
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 _DIST_DIR = _FRONTEND_DIR / "dist"
 _DIST_INDEX = _DIST_DIR / "index.html"
 
 
 def spa_index(_request):
-    """Отдать собранное SPA (frontend/dist/index.html).
-
-    Если сборки ещё нет — понятная подсказка, как её получить. SPA и API живут на
-    одном источнике, поэтому фронтенд ходит на /api/... без проблем с CORS.
-    """
+    """Отдать собранное SPA (или подсказку, если сборки нет)."""
     if not _DIST_INDEX.exists():
         return HttpResponse(
             "Сборка фронтенда не найдена. Выполни: cd frontend && npm install && npm run build "
@@ -38,9 +26,9 @@ def spa_index(_request):
 
 
 def spa_asset(_request, path: str):
-    """Отдать файл из frontend/dist/assets/ (JS/CSS сборки)."""
+    """Файл из frontend/dist/assets/ (JS/CSS)."""
     target = (_DIST_DIR / "assets" / path).resolve()
-    # Защита от выхода за пределы каталога assets.
+    # Защита от выхода за пределы assets.
     if not str(target).startswith(str((_DIST_DIR / "assets").resolve())) or not target.exists():
         raise Http404("asset не найден")
     ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
@@ -52,7 +40,7 @@ urlpatterns = [
     path("assets/<path:path>", spa_asset, name="spa-asset"),
     path("admin/", admin.site.urls),
     path("api/", include("alerts.urls")),
-    # Документация остаётся открытой (без токена), чтобы фронтенд-разработчики читали схему.
+    # Документация открыта (без токена) для фронтенд-разработчиков.
     path("api/schema/", SpectacularAPIView.as_view(permission_classes=[AllowAny]), name="schema"),
     path(
         "api/docs/",
