@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import Alert, Rule, Tx, Wallet
+from .models import Alert, Rule, Tx, Wallet, WalletFeatures
 from .transitions import VALID_STATUSES
 
 # Формат описания от Rule Engine: «Сработавшие правила: Имя (+балл); ...».
@@ -151,6 +151,40 @@ class WalletSerializer(serializers.ModelSerializer):
 
     def get_risk_score(self, obj: Wallet) -> float:
         return float(obj.risk_score)
+
+
+class WalletFeaturesSerializer(serializers.ModelSerializer):
+    """Признаки кошелька (wei-суммы — строками)."""
+
+    total_received = serializers.SerializerMethodField()
+    total_sent = serializers.SerializerMethodField()
+    avg_amount = serializers.SerializerMethodField()
+    max_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WalletFeatures
+        exclude = ["wallet"]
+
+    def get_total_received(self, o) -> str: return _wei(o.total_received)
+    def get_total_sent(self, o) -> str: return _wei(o.total_sent)
+    def get_avg_amount(self, o) -> str: return _wei(o.avg_amount)
+    def get_max_amount(self, o) -> str: return _wei(o.max_amount)
+
+
+class WalletDetailSerializer(WalletSerializer):
+    """Детали кошелька: поля списка + признаки (если посчитаны)."""
+
+    features = serializers.SerializerMethodField()
+
+    class Meta(WalletSerializer.Meta):
+        fields = WalletSerializer.Meta.fields + ["features"]
+
+    def get_features(self, obj: Wallet) -> dict | None:
+        try:
+            feats = obj.features
+        except WalletFeatures.DoesNotExist:
+            return None
+        return WalletFeaturesSerializer(feats).data
 
 
 class TransactionSerializer(serializers.ModelSerializer):

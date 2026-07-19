@@ -154,6 +154,45 @@ CREATE INDEX idx_walletrisk_wallet ON wallet_risk (wallet_id, created_at DESC);
 
 
 -- ------------------------------------------------------------
+-- 8. WalletFeatures — числовые признаки поведения кошелька
+--    Одна строка на кошелёк, вход для ML (Isolation Forest).
+--    Считаются командой --compute-features; wei-суммы в NUMERIC.
+-- ------------------------------------------------------------
+CREATE TABLE wallet_features (
+    wallet_id             BIGINT PRIMARY KEY REFERENCES wallet(id) ON DELETE CASCADE,
+
+    tx_total              INTEGER NOT NULL,        -- всего транзакций
+    tx_in                 INTEGER NOT NULL,        -- входящих
+    tx_out                INTEGER NOT NULL,        -- исходящих
+
+    total_received        NUMERIC(40, 0) NOT NULL, -- wei
+    total_sent            NUMERIC(40, 0) NOT NULL, -- wei
+    avg_amount            NUMERIC(40, 0) NOT NULL, -- средняя сумма транзакции, wei
+    max_amount            NUMERIC(40, 0) NOT NULL, -- максимальная сумма, wei
+
+    in_out_count_ratio    DOUBLE PRECISION NOT NULL, -- tx_in / max(tx_out,1)
+    in_out_value_ratio    DOUBLE PRECISION NOT NULL, -- received / max(sent,1)
+
+    unique_counterparties INTEGER NOT NULL,        -- разных контрагентов
+    unique_senders        INTEGER NOT NULL,        -- разных отправителей (входящие)
+    unique_receivers      INTEGER NOT NULL,        -- разных получателей (исходящие)
+    counterparty_spread   DOUBLE PRECISION NOT NULL, -- unique_counterparties / tx_total
+
+    active_period_days    DOUBLE PRECISION NOT NULL, -- от первой до последней tx, дни
+    avg_tx_per_day        DOUBLE PRECISION NOT NULL, -- средняя частота
+    max_tx_24h            INTEGER NOT NULL,          -- макс. транзакций за 24ч
+
+    small_tx_ratio        DOUBLE PRECISION NOT NULL, -- доля мелких операций (structuring)
+    zero_tx_ratio         DOUBLE PRECISION NOT NULL, -- доля нулевых (вызовы контрактов)
+    transit_ratio         DOUBLE PRECISION NOT NULL, -- транзитность: min(in,out)/max(in,out) по сумме
+
+    computed_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_wallet_features_txtotal ON wallet_features (tx_total DESC);
+
+
+-- ------------------------------------------------------------
 -- 7. Alert — оповещение для аналитика
 --    Ссылается ЛИБО на transaction_risk, ЛИБО на wallet_risk.
 --    CHECK гарантирует, что заполнен ровно один из двух FK —

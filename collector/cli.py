@@ -5,7 +5,7 @@ import argparse
 import logging
 import sys
 
-from . import db, follow, ingest
+from . import db, features, follow, ingest
 from .config import Config, ConfigError
 from .risk import engine as risk_engine
 from .sources.etherscan import EtherscanSource
@@ -41,6 +41,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Применить метки адресов из data/labels_seed.json (идемпотентно)",
     )
     group.add_argument(
+        "--compute-features", action="store_true",
+        help="Посчитать числовые признаки кошельков (вход для ML) в wallet_features",
+    )
+    group.add_argument(
         "--reset-data", action="store_true",
         help="Очистить данные (wallet/tx/оценки/алерты), сохранив справочники "
              "blockchain_network и rule. Требует --yes для подтверждения.",
@@ -68,6 +72,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--labels-file", default=None,
         help="Путь к сид-файлу меток (по умолчанию data/labels_seed.json)",
+    )
+    parser.add_argument(
+        "--min-tx", type=int, default=features.DEFAULT_MIN_TX,
+        help=f"Минимум транзакций для расчёта признаков (по умолчанию {features.DEFAULT_MIN_TX})",
     )
     parser.add_argument(
         "--yes", action="store_true",
@@ -155,6 +163,59 @@ def _run_seed_labels(conn, args) -> int:
     return 0
 
 
+def _run_compute_features(conn, config, args) -> int:
+    print(f"Расчёт признаков кошельков (>= {args.min_tx} транзакций) ...")
+    stats = features.compute_all(conn, config.risk, min_tx=args.min_tx)
+    print(f"Готово: {stats}")
+    _print_feature_summary(conn)
+    return 0
+
+
+def _print_feature_summary(conn) -> None:
+    """Сводка для проверки осмысленности признаков."""
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM wallet_features")
+    print(f"\nВсего строк признаков: {cur.fetchone()[0]}")
+
+    cur.execute(
+        """
+        SELECT AVG(tx_total)::numeric(10,1), AVG(unique_counterparties)::numeric(10,1),
+               AVG(counterparty_spread)::numeric(10,3), AVG(small_tx_ratio)::numeric(10,3),
+               AVG(transit_ratio)::numeric(10,3), AVG(max_tx_24h)::numeric(10,1)
+        FROM wallet_features
+        """
+    )
+    a = cur.fetchone()
+    if a and a[0] is not None:
+        print("Средние: tx_total={0}, контрагентов={1}, разброс={2}, "
+              "доля мелких={3}, транзитность={4}, макс/24ч={5}".format(*a))
+
+    print("\nТоп-5 по числу транзакций:")
+    cur.execute(
+        """
+        SELECT w.address, f.tx_total, f.unique_counterparties, w.label
+        FROM wallet_features f JOIN wallet w ON w.id = f.wallet_id
+        ORDER BY f.tx_total DESC LIMIT 5
+        """
+    )
+    for addr, txt, uc, label in cur.fetchall():
+        print(f"  {addr[:14]}…  tx={txt:<6} контрагентов={uc:<5} {('['+label+']') if label else ''}")
+
+    print("\nSanity-check — размеченные биржи (ожидаем крупные признаки):")
+    cur.execute(
+        """
+        SELECT w.address, f.tx_total, f.unique_counterparties, f.avg_tx_per_day::numeric(10,1)
+        FROM wallet_features f JOIN wallet w ON w.id = f.wallet_id
+        WHERE w.label = 'exchange' ORDER BY f.tx_total DESC
+        """
+    )
+    rows = cur.fetchall()
+    for addr, txt, uc, freq in rows:
+        print(f"  {addr[:14]}…  tx={txt:<6} контрагентов={uc:<5} tx/день={freq}")
+    if not rows:
+        print("  (нет бирж с достаточным числом транзакций для признаков)")
+
+
 def _run_reset(conn, assume_yes: bool) -> int:
     counts = db.count_data_tables(conn)
     total = sum(counts.values())
@@ -194,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.seed_labels:
             return _run_seed_labels(conn, args)
+        if args.compute_features:
+            return _run_compute_features(conn, config, args)
         if args.reset_data:
             return _run_reset(conn, args.yes)
         if args.follow:

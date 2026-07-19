@@ -82,6 +82,10 @@ python -m collector --seed-labels
 
 # посчитать риск по уже собранным данным + показать примеры алертов
 python -m collector --score-risk -v
+
+# числовые признаки кошельков для ML (порог по числу транзакций настраивается)
+python -m collector --compute-features
+python -m collector --compute-features --min-tx 10
 ```
 
 ## 4. Очистка данных (сохраняет справочники)

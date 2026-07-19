@@ -109,6 +109,38 @@ class WalletRisk(models.Model):
         db_table = "wallet_risk"
 
 
+class WalletFeatures(models.Model):
+    """Числовые признаки кошелька для ML (одна строка на кошелёк)."""
+    wallet = models.OneToOneField(
+        "Wallet", models.DO_NOTHING, db_column="wallet_id",
+        primary_key=True, related_name="features",
+    )
+    tx_total = models.IntegerField()
+    tx_in = models.IntegerField()
+    tx_out = models.IntegerField()
+    total_received = models.DecimalField(max_digits=40, decimal_places=0)
+    total_sent = models.DecimalField(max_digits=40, decimal_places=0)
+    avg_amount = models.DecimalField(max_digits=40, decimal_places=0)
+    max_amount = models.DecimalField(max_digits=40, decimal_places=0)
+    in_out_count_ratio = models.FloatField()
+    in_out_value_ratio = models.FloatField()
+    unique_counterparties = models.IntegerField()
+    unique_senders = models.IntegerField()
+    unique_receivers = models.IntegerField()
+    counterparty_spread = models.FloatField()
+    active_period_days = models.FloatField()
+    avg_tx_per_day = models.FloatField()
+    max_tx_24h = models.IntegerField()
+    small_tx_ratio = models.FloatField()
+    zero_tx_ratio = models.FloatField()
+    transit_ratio = models.FloatField()
+    computed_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "wallet_features"
+
+
 class Alert(models.Model):
     id = models.BigAutoField(primary_key=True)
     transaction_risk = models.ForeignKey(

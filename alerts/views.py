@@ -21,7 +21,7 @@ from .models import Alert, Rule, Tx, Wallet
 from .serializers import (
     AlertDetailSerializer, AlertListSerializer, RuleSerializer,
     RuleToggleSerializer, StatusUpdateSerializer, TransactionSerializer,
-    WalletSerializer,
+    WalletDetailSerializer, WalletSerializer,
 )
 from .transitions import RESOLVING_STATUSES, validate_transition
 
@@ -144,6 +144,10 @@ class WalletViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ["address"]           # ?search= по адресу кошелька
     ordering_fields = ["risk_score", "transaction_count"]
     # Пагинация (limit/offset) — чтобы сервер не отдавал десятки тысяч строк разом.
+
+    def get_serializer_class(self):
+        # В деталях кошелька отдаём ещё и признаки (wallet_features).
+        return WalletDetailSerializer if self.action == "retrieve" else WalletSerializer
 
     def get_queryset(self):
         # Серверный фильтр по уровню риска (>=70 high, >=40 medium, иначе low).

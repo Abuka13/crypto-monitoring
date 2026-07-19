@@ -342,6 +342,49 @@ def reset_data(conn) -> dict[str, int]:
     return deleted
 
 
+# ---- Признаки кошельков (feature engineering) ----
+
+def get_wallet_ids_for_features(conn, min_tx: int) -> list[int]:
+    """id кошельков с >= min_tx транзакций (по агрегату transaction_count)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM wallet WHERE transaction_count >= %s ORDER BY id",
+            (min_tx,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
+def get_wallet_tx_full(conn, wallet_id: int) -> list[tuple]:
+    """Транзакции кошелька: (sender_id, receiver_id, amount, timestamp)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT sender_wallet_id, receiver_wallet_id, amount, transaction_timestamp
+            FROM tx
+            WHERE sender_wallet_id = %s OR receiver_wallet_id = %s
+            ORDER BY transaction_timestamp
+            """,
+            (wallet_id, wallet_id),
+        )
+        return cur.fetchall()
+
+
+def upsert_wallet_features(conn, wallet_id: int, feats: dict) -> None:
+    """Записать/обновить строку признаков кошелька (идемпотентно)."""
+    cols = list(feats.keys())
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            INSERT INTO wallet_features (wallet_id, {', '.join(cols)}, computed_at)
+            VALUES (%s, {', '.join(['%s'] * len(cols))}, now())
+            ON CONFLICT (wallet_id) DO UPDATE SET
+                {', '.join(f'{c} = EXCLUDED.{c}' for c in cols)},
+                computed_at = now()
+            """,
+            (wallet_id, *[feats[c] for c in cols]),
+        )
+
+
 # ---- Метки адресов ----
 
 def upsert_wallet_label(
