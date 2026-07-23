@@ -86,7 +86,15 @@ python -m collector --score-risk -v
 # числовые признаки кошельков для ML (порог по числу транзакций настраивается)
 python -m collector --compute-features
 python -m collector --compute-features --min-tx 10
+
+# ML-аномалии (Isolation Forest): обучить -> применить (гибридный риск)
+python -m collector --train-anomaly                    # обучить + сохранить в models/
+python -m collector --train-anomaly --contamination 0.1  # доля аномалий выше
+python -m collector --score-anomaly                    # ml_score + пересчёт риска кошельков
 ```
+
+Порядок ML-этапа: `--compute-features` → `--train-anomaly` → `--score-anomaly`.
+После обучения модель автоматически подмешивается в `--score-risk` и `--follow --score`.
 
 ## 4. Очистка данных (сохраняет справочники)
 

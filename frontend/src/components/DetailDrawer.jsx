@@ -13,7 +13,7 @@ function detailVM(selected, kind, detailData, t){
     const d = detailData;
     const rm = RISK[sel.level] || RISK.low; const sm = STAT[sel.status] || STAT.open;
     const score = sel.final_score;
-    let fired = [], ctxRows = [];
+    let fired = [], ctxRows = [], mlExplanation = null;
     if(d){
       fired = (d.fired_rules || []).map(f => ({name:f.name, score:f.score}));
       const c = d.context || {};
@@ -37,7 +37,9 @@ function detailVM(selected, kind, detailData, t){
           {k:t.f.received, v:weiToEth(c.total_received, 3) + ' ETH'},
           {k:t.f.sent, v:weiToEth(c.total_sent, 3) + ' ETH'},
           {k:t.f.riskscore, v:String(Math.round(c.risk_score))},
+          (c.ml_score != null && c.ml_score > 0) ? {k:t.f.mlScore, v:String(Math.round(c.ml_score))} : null,
         ].filter(Boolean);
+        mlExplanation = c.ml_explanation || null;
       }
     }
     const actions = [];
@@ -52,7 +54,7 @@ function detailVM(selected, kind, detailData, t){
       riskLabel:t.risk[sel.level] || sel.level, riskStyle:'background:' + rm.bg + ';color:' + rm.color + ';border:1px solid ' + rm.color + '40;',
       statusLabel:t.status[sel.status] || sel.status, statusStyle:'background:' + sm.bg + ';color:' + sm.color + ';',
       gauge:ringGauge(score, rm.color), score:score, scoreColor:rm.color,
-      fired:fired, ctxRows:ctxRows, actions:actions, hasActions:actions.length > 0,
+      fired:fired, ctxRows:ctxRows, mlExplanation:mlExplanation, actions:actions, hasActions:actions.length > 0,
       loadingCtx:!d,
     };
   }
@@ -126,6 +128,10 @@ export default function DetailDrawer({ t, selected, kind, detailData, onClose, o
             d.fired.map((f, i) => h('div', {key:i, style:css("display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--card);border:1px solid var(--border);border-radius:11px;")},
               h('span', {style:css("flex:1;font-size:13px;")}, f.name),
               h('span', {style:css("font-size:13px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--accent);")}, '+' + f.score))))) : null,
+
+        d.mlExplanation ? h('div', {style:css("margin-bottom:22px;")},
+          h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.anomaly),
+          h('div', {style:css("font-size:12.5px;line-height:1.55;padding:11px 14px;background:rgba(176,82,255,.10);border:1px solid rgba(176,82,255,.35);border-radius:11px;color:var(--text);")}, d.mlExplanation)) : null,
 
         (d.ctxRows && d.ctxRows.length) ? h('div', {style:css("margin-bottom:22px;")},
           h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.context),

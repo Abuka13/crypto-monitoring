@@ -269,17 +269,18 @@ def insert_transaction_risk(
 def insert_wallet_risk(
     conn, *, wallet_id: int, rule_score: Decimal,
     ml_score: Decimal, final_score: Decimal, risk_level: str,
+    ml_explanation: str | None = None,
 ) -> int:
     """Новая оценка риска кошелька (история)."""
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO wallet_risk
-                (wallet_id, rule_score, ml_score, final_score, risk_level)
-            VALUES (%s, %s, %s, %s, %s)
+                (wallet_id, rule_score, ml_score, final_score, risk_level, ml_explanation)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (wallet_id, rule_score, ml_score, final_score, risk_level),
+            (wallet_id, rule_score, ml_score, final_score, risk_level, ml_explanation),
         )
         return cur.fetchone()[0]
 
@@ -367,6 +368,33 @@ def get_wallet_tx_full(conn, wallet_id: int) -> list[tuple]:
             (wallet_id, wallet_id),
         )
         return cur.fetchall()
+
+
+_FEATURE_COLS = (
+    "tx_total", "tx_in", "tx_out", "total_received", "total_sent", "avg_amount",
+    "max_amount", "in_out_count_ratio", "in_out_value_ratio", "unique_counterparties",
+    "unique_senders", "unique_receivers", "counterparty_spread", "active_period_days",
+    "avg_tx_per_day", "max_tx_24h", "small_tx_ratio", "zero_tx_ratio", "transit_ratio",
+)
+
+
+def get_wallet_features_map(conn, wallet_ids: list[int] | None = None) -> dict[int, dict]:
+    """{wallet_id: {признаки}} из wallet_features. Без wallet_ids — все строки."""
+    cols = ", ".join(_FEATURE_COLS)
+    with conn.cursor() as cur:
+        if wallet_ids is None:
+            cur.execute(f"SELECT wallet_id, {cols} FROM wallet_features")
+        else:
+            if not wallet_ids:
+                return {}
+            cur.execute(
+                f"SELECT wallet_id, {cols} FROM wallet_features WHERE wallet_id = ANY(%s)",
+                (list(wallet_ids),),
+            )
+        out = {}
+        for row in cur.fetchall():
+            out[row[0]] = dict(zip(_FEATURE_COLS, row[1:]))
+        return out
 
 
 def upsert_wallet_features(conn, wallet_id: int, feats: dict) -> None:

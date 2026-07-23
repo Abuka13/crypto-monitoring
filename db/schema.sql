@@ -144,6 +144,7 @@ CREATE TABLE wallet_risk (
     ml_score    NUMERIC(6, 2) NOT NULL DEFAULT 0,
     final_score NUMERIC(6, 2) NOT NULL DEFAULT 0,
     risk_level  VARCHAR(10)  NOT NULL,
+    ml_explanation TEXT,                                 -- топ-признаки ML-аномалии
 
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
 

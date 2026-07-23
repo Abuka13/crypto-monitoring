@@ -105,7 +105,8 @@ class AlertDetailSerializer(serializers.ModelSerializer):
                 "status": tx.status,
             }
         if obj.target_type == "wallet" and obj.wallet_risk:
-            w = obj.wallet_risk.wallet
+            wr = obj.wallet_risk
+            w = wr.wallet
             return {
                 "address": w.address,
                 "transaction_count": w.transaction_count,
@@ -117,6 +118,10 @@ class AlertDetailSerializer(serializers.ModelSerializer):
                 "label_source": w.label_source,
                 "first_seen_at": w.first_seen_at,
                 "last_seen_at": w.last_seen_at,
+                # Вклад ИИ в эту оценку риска
+                "rule_score": float(wr.rule_score),
+                "ml_score": float(wr.ml_score),
+                "ml_explanation": wr.ml_explanation,
             }
         return None
 
@@ -172,12 +177,13 @@ class WalletFeaturesSerializer(serializers.ModelSerializer):
 
 
 class WalletDetailSerializer(WalletSerializer):
-    """Детали кошелька: поля списка + признаки (если посчитаны)."""
+    """Детали кошелька: поля списка + признаки + последняя оценка риска (с ML)."""
 
     features = serializers.SerializerMethodField()
+    latest_risk = serializers.SerializerMethodField()
 
     class Meta(WalletSerializer.Meta):
-        fields = WalletSerializer.Meta.fields + ["features"]
+        fields = WalletSerializer.Meta.fields + ["features", "latest_risk"]
 
     def get_features(self, obj: Wallet) -> dict | None:
         try:
@@ -185,6 +191,18 @@ class WalletDetailSerializer(WalletSerializer):
         except WalletFeatures.DoesNotExist:
             return None
         return WalletFeaturesSerializer(feats).data
+
+    def get_latest_risk(self, obj: Wallet) -> dict | None:
+        wr = obj.walletrisk_set.order_by("-created_at", "-id").first()
+        if wr is None:
+            return None
+        return {
+            "rule_score": float(wr.rule_score),
+            "ml_score": float(wr.ml_score),
+            "final_score": float(wr.final_score),
+            "risk_level": wr.risk_level,
+            "ml_explanation": wr.ml_explanation,
+        }
 
 
 class TransactionSerializer(serializers.ModelSerializer):

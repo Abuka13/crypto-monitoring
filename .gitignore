@@ -49,5 +49,6 @@ logs/
 # ML модели и данные (большие файлы — хранить отдельно)
 *.pkl
 *.joblib
+models/
 data/raw/
 data/processed/

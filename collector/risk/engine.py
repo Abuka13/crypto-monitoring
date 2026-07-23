@@ -28,6 +28,7 @@ class RiskStats:
     wallet_alerts: int = 0
     wallet_alerts_updated: int = 0
     wallets_flagged: int = 0
+    wallets_ml_scored: int = 0    # кошельков с ML-оценкой (есть признаки)
     skipped_rules: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
@@ -37,7 +38,7 @@ class RiskStats:
             f"кошельков оценено={self.wallets_evaluated}, "
             f"оценок wallet={self.wallet_risk_rows}, "
             f"алертов по wallet (нов/обновл)={self.wallet_alerts}/{self.wallet_alerts_updated}, "
-            f"помечено кошельков={self.wallets_flagged}"
+            f"помечено кошельков={self.wallets_flagged}, ML-оценок={self.wallets_ml_scored}"
         )
 
 
@@ -80,20 +81,26 @@ def _load_rules(conn, stats: RiskStats):
 
 
 # ---- Полный пересчёт по всей базе ----
-def score_risk(conn, cfg: RiskConfig) -> RiskStats:
+def score_risk(conn, cfg: RiskConfig, model=None) -> RiskStats:
+    """Полный расчёт (tx + кошельки). model (AnomalyModel) опционален: если задан,
+    к рулевому скору кошелька подмешивается ML-аномалия; иначе — только правила."""
     stats = RiskStats()
     tx_rules, wallet_rules = _load_rules(conn, stats)
-    log.info("Активных правил: tx=%d, wallet=%d", len(tx_rules), len(wallet_rules))
+    log.info("Активных правил: tx=%d, wallet=%d; ML=%s",
+             len(tx_rules), len(wallet_rules), "вкл" if model else "выкл")
 
     _score_transaction_rows(conn, cfg, tx_rules, db.get_transactions_for_scoring(conn), stats)
-    _score_wallet_rows(conn, cfg, wallet_rules, db.get_wallets_for_scoring(conn), stats)
+
+    fmap = db.get_wallet_features_map(conn) if model else {}
+    _score_wallet_rows(conn, cfg, wallet_rules, db.get_wallets_for_scoring(conn),
+                       stats, model=model, features_map=fmap)
 
     conn.commit()
     return stats
 
 
 # ---- Инкрементальный пересчёт: только данные одного блока ----
-def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int) -> RiskStats:
+def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int, model=None) -> RiskStats:
     """Риск только по tx блока и затронутым кошелькам (для --follow --score)."""
     stats = RiskStats()
     tx_rules, wallet_rules = _load_rules(conn, stats)
@@ -103,8 +110,22 @@ def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int) -> Ri
 
     wallet_ids = db.get_affected_wallet_ids_by_block(conn, network_id, block_number)
     wallet_rows = db.get_wallets_for_scoring_by_ids(conn, wallet_ids)
-    _score_wallet_rows(conn, cfg, wallet_rules, wallet_rows, stats)
+    fmap = db.get_wallet_features_map(conn, wallet_ids) if model else {}
+    _score_wallet_rows(conn, cfg, wallet_rules, wallet_rows, stats,
+                       model=model, features_map=fmap)
 
+    conn.commit()
+    return stats
+
+
+# ---- Только кошельки с ML-моделью (для --score-anomaly) ----
+def score_wallets(conn, cfg: RiskConfig, model) -> RiskStats:
+    """Пересчитать риск всех кошельков с подмешиванием ML (модель обязательна)."""
+    stats = RiskStats()
+    _, wallet_rules = _load_rules(conn, stats)
+    fmap = db.get_wallet_features_map(conn)
+    _score_wallet_rows(conn, cfg, wallet_rules, db.get_wallets_for_scoring(conn),
+                       stats, model=model, features_map=fmap)
     conn.commit()
     return stats
 
@@ -147,7 +168,9 @@ def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None
                 stats.tx_alerts_updated += 1
 
 
-def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats) -> None:
+def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats,
+                       model=None, features_map=None) -> None:
+    features_map = features_map or {}
     for wallet_id, address, first_seen_at, label in wallets:
         history = db.get_wallet_tx_history(conn, wallet_id)
         facts = WalletFacts(
@@ -164,13 +187,27 @@ def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats) -> No
             if rules.WALLET_RULES[rule.name](facts, cfg)
         ]
         rule_score = sum((s for _, s in fired), Decimal(0))
-        final_score = rule_score
+
+        # ML-аномалия подмешивается только для кошельков с признаками.
+        ml_score = Decimal(0)
+        ml_expl = None
+        if model is not None and wallet_id in features_map:
+            ml_int, ml_expl = model.score_one(features_map[wallet_id])
+            ml_score = Decimal(ml_int)
+            # Гибрид: взвешенная комбинация правил и ИИ (шкала 0–100).
+            final_score = Decimal(str(round(
+                cfg.weight_rule * float(rule_score) + cfg.weight_ml * ml_int, 2)))
+            stats.wallets_ml_scored += 1
+        else:
+            final_score = rule_score  # без модели/признаков — только правила
+
         risk_level = rules.level_from_score(final_score)
         is_flagged = rules.alert_creation_needed(risk_level)
 
         risk_id = db.insert_wallet_risk(
             conn, wallet_id=wallet_id, rule_score=rule_score,
-            ml_score=Decimal(0), final_score=final_score, risk_level=risk_level,
+            ml_score=ml_score, final_score=final_score, risk_level=risk_level,
+            ml_explanation=ml_expl,
         )
         db.update_wallet_risk_summary(
             conn, wallet_id=wallet_id, risk_score=final_score, is_flagged=is_flagged,
@@ -181,10 +218,16 @@ def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats) -> No
             stats.wallets_flagged += 1
 
         if rules.alert_creation_needed(risk_level):
+            desc_parts = []
+            if fired:
+                desc_parts.append(f"Сработавшие правила: {_reason(fired)}")
+            if ml_score >= 40 and ml_expl:
+                desc_parts.append(f"ML-аномалия ({int(ml_score)}): {ml_expl}")
+            description = " | ".join(desc_parts) if desc_parts else "—"
             outcome = _emit_or_refresh_alert(
                 conn, target_type="wallet", object_id=wallet_id, risk_id=risk_id,
                 title=f"Рискованный кошелёк {address[:12]}…: {risk_level} ({final_score})",
-                description=f"Сработавшие правила: {_reason(fired)}",
+                description=description,
                 level=rules.alert_level_from_risk_level(risk_level),
             )
             if outcome == "created":

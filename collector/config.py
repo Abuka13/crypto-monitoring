@@ -33,6 +33,9 @@ class RiskConfig:
     high_frequency_window_hours: int         #   в окне M часов
     structuring_small_amount_wei: int        # «Дробление»: порог мелкой суммы
     structuring_min_count: int               #   и минимум таких операций
+    # Веса гибридного скоринга: final = weight_rule*rule + weight_ml*ml (сумма = 1).
+    weight_rule: float
+    weight_ml: float
 
     @staticmethod
     def load() -> "RiskConfig":
@@ -47,6 +50,8 @@ class RiskConfig:
                 os.getenv("RISK_STRUCTURING_SMALL_WEI", str(ETH // 100))
             ),
             structuring_min_count=int(os.getenv("RISK_STRUCTURING_MIN_COUNT", "30")),
+            weight_rule=float(os.getenv("RISK_WEIGHT_RULE", "0.6")),
+            weight_ml=float(os.getenv("RISK_WEIGHT_ML", "0.4")),
         )
 
 

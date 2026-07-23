@@ -91,7 +91,9 @@ TX_RULES = {
 
 # ---- Условия правил уровня кошелька: (facts, cfg) -> bool ----
 def _wallet_new(w: WalletFacts, cfg: RiskConfig) -> bool:
-    """Недавно создан + крупный оборот."""
+    """Недавно создан + крупный оборот. Биржи исключены (это не новые адреса)."""
+    if w.label == LABEL_EXCHANGE:
+        return False
     if w.first_seen_at is None:
         return False
     age = datetime.now(timezone.utc) - w.first_seen_at

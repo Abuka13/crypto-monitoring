@@ -52,8 +52,20 @@ python -m collector --follow                   # слежение: постоя�
 python -m collector --score-risk               # расчёт риска + генерация алертов
 python -m collector --seed-labels              # применить метки адресов (data/labels_seed.json)
 python -m collector --compute-features          # числовые признаки кошельков для ML (wallet_features)
+python -m collector --train-anomaly             # обучить Isolation Forest -> models/anomaly.joblib
+python -m collector --score-anomaly             # применить модель: ml_score + гибридный риск
 python -m collector --reset-data               # очистка данных (предпросмотр; --yes для удаления)
 ```
+
+**ML-поиск аномалий (Isolation Forest).** `--train-anomaly` обучает модель на
+признаках `wallet_features` (лог-масштаб для сумм wei + `StandardScaler`) и
+сохраняет её вместе со scaler в `models/anomaly.joblib`. `--score-anomaly`
+применяет модель: оценка аномальности → `ml_score` (0–100) → **гибридный**
+`final_score = weight_rule·rule + weight_ml·ml` (по умолчанию 0.6 / 0.4, из `.env`:
+`RISK_WEIGHT_RULE`, `RISK_WEIGHT_ML`). Если модель обучена, ML автоматически
+подмешивается и в `--score-risk`, и в `--follow --score`; если модели нет — работают
+только правила. Для аномальных кошельков сохраняется объяснение (топ-3 признака).
+Папка `models/` — в `.gitignore` (в репозиторий кладём только код обучения).
 
 `--compute-features` считает для каждого активного кошелька (≥5 транзакций,
 порог настраивается `--min-tx`) набор поведенческих признаков (число вход/исход,

@@ -5,7 +5,7 @@ import argparse
 import logging
 import sys
 
-from . import db, features, follow, ingest
+from . import anomaly, db, features, follow, ingest
 from .config import Config, ConfigError
 from .risk import engine as risk_engine
 from .sources.etherscan import EtherscanSource
@@ -45,6 +45,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Посчитать числовые признаки кошельков (вход для ML) в wallet_features",
     )
     group.add_argument(
+        "--train-anomaly", action="store_true",
+        help="Обучить модель поиска аномалий (Isolation Forest) и сохранить в models/",
+    )
+    group.add_argument(
+        "--score-anomaly", action="store_true",
+        help="Применить обученную модель: обновить ml_score и пересчитать риск кошельков",
+    )
+    group.add_argument(
         "--reset-data", action="store_true",
         help="Очистить данные (wallet/tx/оценки/алерты), сохранив справочники "
              "blockchain_network и rule. Требует --yes для подтверждения.",
@@ -78,6 +86,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Минимум транзакций для расчёта признаков (по умолчанию {features.DEFAULT_MIN_TX})",
     )
     parser.add_argument(
+        "--contamination", type=float, default=0.06,
+        help="Ожидаемая доля аномалий для обучения (для --train-anomaly; по умолчанию 0.06)",
+    )
+    parser.add_argument(
         "--yes", action="store_true",
         help="Подтвердить удаление для --reset-data без дополнительного запроса",
     )
@@ -90,6 +102,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _run_follow(conn, config, args) -> int:
     source = _make_source(config)
     network_id = db.get_network_id(conn, source.network_name)
+    model = anomaly.AnomalyModel.load() if args.score else None
     return follow.run_follow(
         conn, source, network_id,
         poll_interval=args.poll_interval,
@@ -97,6 +110,7 @@ def _run_follow(conn, config, args) -> int:
         from_block=args.from_block,
         score=args.score,
         risk_cfg=config.risk,
+        model=model,
     )
 
 
@@ -116,8 +130,9 @@ def _run_collect(conn, config, args) -> int:
 
 
 def _run_score_risk(conn, config) -> int:
-    print("Расчёт риска по собранным данным (Rule Engine) ...")
-    stats = risk_engine.score_risk(conn, config.risk)
+    model = anomaly.AnomalyModel.load()  # если обучена — ML подмешивается; иначе только правила
+    print(f"Расчёт риска по собранным данным (Rule Engine{'+ML' if model else ''}) ...")
+    stats = risk_engine.score_risk(conn, config.risk, model=model)
     print(f"Готово: {stats}")
     if stats.skipped_rules:
         print(f"Пропущены правила без реализации: {', '.join(stats.skipped_rules)}")
@@ -216,6 +231,75 @@ def _print_feature_summary(conn) -> None:
         print("  (нет бирж с достаточным числом транзакций для признаков)")
 
 
+def _run_train_anomaly(conn, config, args) -> int:
+    import numpy as np
+
+    fmap = db.get_wallet_features_map(conn)
+    items = [(w, f) for w, f in fmap.items() if int(f["tx_total"]) > 0]
+    if len(items) < 20:
+        print(f"Слишком мало кошельков с признаками ({len(items)}). "
+              f"Сначала: python -m collector --compute-features", file=sys.stderr)
+        return 2
+    wids = [w for w, _ in items]
+    rows = [f for _, f in items]
+
+    print(f"Обучение Isolation Forest на {len(rows)} кошельках (contamination={args.contamination}) ...")
+    model, ml_scores = anomaly.train(rows, contamination=args.contamination)
+    model.save()
+    print(f"Модель сохранена: {anomaly.MODEL_PATH}")
+
+    ml = np.asarray(ml_scores)
+    print(f"\nРаспределение ml_score: min={ml.min():.0f} p50={np.percentile(ml,50):.0f} "
+          f"p90={np.percentile(ml,90):.0f} p99={np.percentile(ml,99):.0f} max={ml.max():.0f}")
+    print(f"Аномальных (ml_score>=70): {(ml>=70).sum()} из {len(ml)}")
+
+    # Один запрос: адрес+метка для всех кошельков с признаками.
+    brief = {r[0]: (r[1], r[3]) for r in db.get_wallets_for_scoring_by_ids(conn, wids)}
+
+    top = np.argsort(ml)[::-1][:10]
+    print("\nТоп-10 самых аномальных кошельков:")
+    for i in top:
+        addr, label = brief.get(wids[i], ("?", None))
+        _, expl = model.score_one(rows[i])
+        tag = f" [{label}]" if label else ""
+        print(f"  ml={int(ml[i]):3}  {addr[:14]}…{tag}")
+        print(f"        {expl}")
+
+    print("\nSanity-check — размеченные биржи (не должны быть ложно-аномальными):")
+    shown = 0
+    for w, f in items:
+        addr, label = brief.get(w, ("?", None))
+        if label == "exchange":
+            score, _ = model.score_one(f)
+            print(f"  ml={score:3}  {addr[:14]}… [exchange]")
+            shown += 1
+    if not shown:
+        print("  (нет бирж с признаками)")
+    return 0
+
+
+def _run_score_anomaly(conn, config) -> int:
+    model = anomaly.AnomalyModel.load()
+    if model is None:
+        print("Модель не обучена. Сначала: python -m collector --train-anomaly", file=sys.stderr)
+        return 2
+    print("Пересчёт риска кошельков с ML-аномалией ...")
+    stats = risk_engine.score_wallets(conn, config.risk, model)
+    print(f"Готово: {stats}")
+    _print_alerts_sample(conn)
+    return 0
+
+
+def _print_alerts_sample(conn) -> None:
+    alerts = db.get_sample_alerts(conn, limit=5)
+    if not alerts:
+        return
+    print(f"\nПримеры алертов (свежие {len(alerts)}):")
+    for target_type, level, status, title, description, created_at in alerts:
+        print(f"  [{level.upper():8}] {title}")
+        print(f"          {description}")
+
+
 def _run_reset(conn, assume_yes: bool) -> int:
     counts = db.count_data_tables(conn)
     total = sum(counts.values())
@@ -257,6 +341,10 @@ def main(argv: list[str] | None = None) -> int:
             return _run_seed_labels(conn, args)
         if args.compute_features:
             return _run_compute_features(conn, config, args)
+        if args.train_anomaly:
+            return _run_train_anomaly(conn, config, args)
+        if args.score_anomaly:
+            return _run_score_anomaly(conn, config)
         if args.reset_data:
             return _run_reset(conn, args.yes)
         if args.follow:
