@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import psycopg2
 import psycopg2.extensions
+from psycopg2.extras import Json
 
 
 def connect(database_url: str) -> psycopg2.extensions.connection:
@@ -165,11 +166,12 @@ def get_active_rules(conn) -> list[Rule]:
 
 
 def get_transactions_for_scoring(conn) -> list[tuple]:
-    """Все tx с метками кошельков: (tx_id, amount, sender_label, receiver_label)."""
+    """Все tx: (id, amount, sender_label, receiver_label, sender_src, receiver_src)."""
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT t.id, t.amount, sw.label, rw.label
+            SELECT t.id, t.amount, sw.label, rw.label,
+                   sw.label_source, rw.label_source
             FROM tx t
             JOIN wallet sw ON sw.id = t.sender_wallet_id
             JOIN wallet rw ON rw.id = t.receiver_wallet_id
@@ -180,10 +182,10 @@ def get_transactions_for_scoring(conn) -> list[tuple]:
 
 
 def get_wallets_for_scoring(conn) -> list[tuple]:
-    """Все кошельки: (id, address, first_seen_at, label)."""
+    """Все кошельки: (id, address, first_seen_at, label, label_source)."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, address, first_seen_at, label FROM wallet ORDER BY id"
+            "SELECT id, address, first_seen_at, label, label_source FROM wallet ORDER BY id"
         )
         return cur.fetchall()
 
@@ -191,11 +193,12 @@ def get_wallets_for_scoring(conn) -> list[tuple]:
 # ---- Инкрементальный расчёт: выборки по одному блоку ----
 
 def get_transactions_for_scoring_by_block(conn, network_id: int, block_number: int) -> list[tuple]:
-    """tx одного блока: (id, amount, sender_label, receiver_label)."""
+    """tx блока: (id, amount, sender_label, receiver_label, sender_src, receiver_src)."""
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT t.id, t.amount, sw.label, rw.label
+            SELECT t.id, t.amount, sw.label, rw.label,
+                   sw.label_source, rw.label_source
             FROM tx t
             JOIN wallet sw ON sw.id = t.sender_wallet_id
             JOIN wallet rw ON rw.id = t.receiver_wallet_id
@@ -222,12 +225,12 @@ def get_affected_wallet_ids_by_block(conn, network_id: int, block_number: int) -
 
 
 def get_wallets_for_scoring_by_ids(conn, wallet_ids: list[int]) -> list[tuple]:
-    """Кошельки по списку id: (id, address, first_seen_at, label)."""
+    """Кошельки по id: (id, address, first_seen_at, label, label_source)."""
     if not wallet_ids:
         return []
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, address, first_seen_at, label FROM wallet WHERE id = ANY(%s) ORDER BY id",
+            "SELECT id, address, first_seen_at, label, label_source FROM wallet WHERE id = ANY(%s) ORDER BY id",
             (list(wallet_ids),),
         )
         return cur.fetchall()
@@ -251,17 +254,20 @@ def get_wallet_tx_history(conn, wallet_id: int) -> list[tuple]:
 def insert_transaction_risk(
     conn, *, transaction_id: int, rule_score: Decimal,
     ml_score: Decimal, final_score: Decimal, risk_level: str,
+    graph_score: Decimal | None = None, decision: dict | None = None,
 ) -> int:
     """Новая оценка риска транзакции (история)."""
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO transaction_risk
-                (transaction_id, rule_score, ml_score, final_score, risk_level)
-            VALUES (%s, %s, %s, %s, %s)
+                (transaction_id, rule_score, ml_score, graph_score,
+                 final_score, risk_level, decision)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (transaction_id, rule_score, ml_score, final_score, risk_level),
+            (transaction_id, rule_score, ml_score, graph_score,
+             final_score, risk_level, Json(decision) if decision else None),
         )
         return cur.fetchone()[0]
 
@@ -270,17 +276,20 @@ def insert_wallet_risk(
     conn, *, wallet_id: int, rule_score: Decimal,
     ml_score: Decimal, final_score: Decimal, risk_level: str,
     ml_explanation: str | None = None,
+    graph_score: Decimal | None = None, decision: dict | None = None,
 ) -> int:
     """Новая оценка риска кошелька (история)."""
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO wallet_risk
-                (wallet_id, rule_score, ml_score, final_score, risk_level, ml_explanation)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (wallet_id, rule_score, ml_score, graph_score, final_score,
+                 risk_level, ml_explanation, decision)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (wallet_id, rule_score, ml_score, final_score, risk_level, ml_explanation),
+            (wallet_id, rule_score, ml_score, graph_score, final_score,
+             risk_level, ml_explanation, Json(decision) if decision else None),
         )
         return cur.fetchone()[0]
 

@@ -1,4 +1,6 @@
-"""Правила Rule Engine: условия + уровни риска.
+"""Правила Rule Engine: условия срабатывания.
+
+Уровень риска определяет Decision Engine (risk/decision.py), а не эти правила.
 
 Балл и вкл/выкл правила — в таблице `rule`; условие — здесь. Связь по имени
 (реестры TX_RULES / WALLET_RULES): калибровка в БД, логика в коде.
@@ -28,22 +30,6 @@ LABEL_FRAUD = "fraud"
 
 # risk_level -> alert.level (lower)
 _ALERT_LEVEL = {"LOW": "low", "MEDIUM": "medium", "HIGH": "high", "CRITICAL": "critical"}
-
-
-def level_from_score(score: Decimal) -> str:
-    """final_score -> risk_level: 0–50 LOW · 51–70 MEDIUM · 71–80 HIGH · 81+ CRITICAL."""
-    if score > 80:
-        return "CRITICAL"
-    if score > 70:
-        return "HIGH"
-    if score > 50:
-        return "MEDIUM"
-    return "LOW"
-
-
-def alert_creation_needed(risk_level: str) -> bool:
-    """Алерт создаётся для всех уровней, кроме LOW."""
-    return risk_level != "LOW"
 
 
 def alert_level_from_risk_level(risk_level: str) -> str:

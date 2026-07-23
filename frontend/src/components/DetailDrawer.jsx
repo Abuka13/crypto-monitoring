@@ -14,6 +14,7 @@ function detailVM(selected, kind, detailData, t){
     const rm = RISK[sel.level] || RISK.low; const sm = STAT[sel.status] || STAT.open;
     const score = sel.final_score;
     let fired = [], ctxRows = [], mlExplanation = null;
+    const decision = d ? (d.decision || null) : null;
     if(d){
       fired = (d.fired_rules || []).map(f => ({name:f.name, score:f.score}));
       const c = d.context || {};
@@ -54,7 +55,8 @@ function detailVM(selected, kind, detailData, t){
       riskLabel:t.risk[sel.level] || sel.level, riskStyle:'background:' + rm.bg + ';color:' + rm.color + ';border:1px solid ' + rm.color + '40;',
       statusLabel:t.status[sel.status] || sel.status, statusStyle:'background:' + sm.bg + ';color:' + sm.color + ';',
       gauge:ringGauge(score, rm.color), score:score, scoreColor:rm.color,
-      fired:fired, ctxRows:ctxRows, mlExplanation:mlExplanation, actions:actions, hasActions:actions.length > 0,
+      fired:fired, ctxRows:ctxRows, mlExplanation:mlExplanation, decision:decision,
+      actions:actions, hasActions:actions.length > 0,
       loadingCtx:!d,
     };
   }
@@ -94,6 +96,38 @@ function detailVM(selected, kind, detailData, t){
   };
 }
 
+// Блок Decision Engine: причины решения + вклад каждого независимого источника.
+function renderDecision(t, dec){
+  const s = dec.sources || {};
+  const chip = (label, active, text) => h('div', {key:label,
+    style:css("display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;font-size:12px;"
+      + (active ? "background:var(--accent-soft);border:1px solid var(--accent);"
+                : "background:var(--card2);border:1px solid var(--border);color:var(--muted);"))},
+    h('span', {style:css("font-weight:700;min-width:74px;")}, label),
+    h('span', {style:css("font-family:'JetBrains Mono',monospace;")}, text));
+
+  const hard = s.hard_signal || {}, rule = s.rule || {}, ml = s.ml || {}, graph = s.graph || {};
+  return h('div', {style:css("margin-bottom:22px;")},
+    h('div', {style:css("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;")},
+      h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;")}, t.detail.decision),
+      h('div', {style:css("font-size:11.5px;color:var(--muted);")},
+        t.detail.confidence + ': ' + Math.round((dec.confidence || 0) * 100) + '%')),
+
+    // Причины человеческим языком
+    h('div', {style:css("display:flex;flex-direction:column;gap:7px;margin-bottom:12px;")},
+      (dec.reasons || []).map((r, i) => h('div', {key:i,
+        style:css("display:flex;gap:9px;font-size:12.5px;line-height:1.5;padding:10px 13px;background:var(--card);border:1px solid var(--border);border-radius:11px;")},
+        h('span', {style:css("color:var(--accent);flex-shrink:0;")}, '•'),
+        h('span', null, r)))),
+
+    // Вклад источников
+    h('div', {style:css("display:flex;flex-direction:column;gap:6px;")},
+      chip(t.detail.srcHard, !!hard.active, hard.active ? t.yes : t.no),
+      chip(t.detail.srcRule, !!rule.high, String(rule.score ?? 0)),
+      chip(t.detail.srcMl, !!ml.high, ml.available ? String(ml.score ?? 0) : '—'),
+      chip(t.detail.srcGraph, !!graph.high, graph.available ? String(graph.score ?? 0) : t.detail.notImplemented)));
+}
+
 export default function DetailDrawer({ t, selected, kind, detailData, onClose, onSetStatus, copy }){
   if(!selected) return null;
   const d = detailVM(selected, kind, detailData, t);
@@ -129,9 +163,10 @@ export default function DetailDrawer({ t, selected, kind, detailData, onClose, o
               h('span', {style:css("flex:1;font-size:13px;")}, f.name),
               h('span', {style:css("font-size:13px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--accent);")}, '+' + f.score))))) : null,
 
-        d.mlExplanation ? h('div', {style:css("margin-bottom:22px;")},
-          h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.anomaly),
-          h('div', {style:css("font-size:12.5px;line-height:1.55;padding:11px 14px;background:rgba(176,82,255,.10);border:1px solid rgba(176,82,255,.35);border-radius:11px;color:var(--text);")}, d.mlExplanation)) : null,
+        d.decision ? renderDecision(t, d.decision) : (
+          d.mlExplanation ? h('div', {style:css("margin-bottom:22px;")},
+            h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.anomaly),
+            h('div', {style:css("font-size:12.5px;line-height:1.55;padding:11px 14px;background:rgba(176,82,255,.10);border:1px solid rgba(176,82,255,.35);border-radius:11px;color:var(--text);")}, d.mlExplanation)) : null),
 
         (d.ctxRows && d.ctxRows.length) ? h('div', {style:css("margin-bottom:22px;")},
           h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.context),

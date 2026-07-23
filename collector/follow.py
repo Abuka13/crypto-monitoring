@@ -48,6 +48,7 @@ def run_follow(
     score: bool = False,
     risk_cfg: RiskConfig | None = None,
     model=None,
+    dcfg=None,
 ) -> int:
     """Цикл слежения (Ctrl+C — стоп).
 
@@ -91,7 +92,7 @@ def run_follow(
                 # Риск только по этому блоку (сбой расчёта не роняет сбор).
                 if score and stats.inserted:
                     try:
-                        rstats = risk_engine.score_block(conn, risk_cfg, network_id, block, model=model)
+                        rstats = risk_engine.score_block(conn, risk_cfg, network_id, block, model=model, dcfg=dcfg)
                         log.info("Риск по блоку %d: %s", block, rstats)
                     except Exception as exc:
                         conn.rollback()

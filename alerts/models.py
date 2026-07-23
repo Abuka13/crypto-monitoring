@@ -86,8 +86,10 @@ class TransactionRisk(models.Model):
     )
     rule_score = models.DecimalField(max_digits=6, decimal_places=2)
     ml_score = models.DecimalField(max_digits=6, decimal_places=2)
+    graph_score = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     final_score = models.DecimalField(max_digits=6, decimal_places=2)
     risk_level = models.CharField(max_length=10)
+    decision = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField()
 
     class Meta:
@@ -101,8 +103,10 @@ class WalletRisk(models.Model):
     rule_score = models.DecimalField(max_digits=6, decimal_places=2)
     ml_score = models.DecimalField(max_digits=6, decimal_places=2)
     final_score = models.DecimalField(max_digits=6, decimal_places=2)
+    graph_score = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     risk_level = models.CharField(max_length=10)
     ml_explanation = models.TextField(null=True, blank=True)
+    decision = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField()
 
     class Meta:

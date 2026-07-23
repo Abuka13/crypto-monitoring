@@ -111,6 +111,7 @@ def _run_follow(conn, config, args) -> int:
         score=args.score,
         risk_cfg=config.risk,
         model=model,
+        dcfg=config.decision,
     )
 
 
@@ -132,7 +133,7 @@ def _run_collect(conn, config, args) -> int:
 def _run_score_risk(conn, config) -> int:
     model = anomaly.AnomalyModel.load()  # если обучена — ML подмешивается; иначе только правила
     print(f"Расчёт риска по собранным данным (Rule Engine{'+ML' if model else ''}) ...")
-    stats = risk_engine.score_risk(conn, config.risk, model=model)
+    stats = risk_engine.score_risk(conn, config.risk, model=model, dcfg=config.decision)
     print(f"Готово: {stats}")
     if stats.skipped_rules:
         print(f"Пропущены правила без реализации: {', '.join(stats.skipped_rules)}")
@@ -284,7 +285,7 @@ def _run_score_anomaly(conn, config) -> int:
         print("Модель не обучена. Сначала: python -m collector --train-anomaly", file=sys.stderr)
         return 2
     print("Пересчёт риска кошельков с ML-аномалией ...")
-    stats = risk_engine.score_wallets(conn, config.risk, model)
+    stats = risk_engine.score_wallets(conn, config.risk, model, dcfg=config.decision)
     print(f"Готово: {stats}")
     _print_alerts_sample(conn)
     return 0

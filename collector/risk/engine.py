@@ -10,8 +10,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from .. import db
-from ..config import RiskConfig
+from ..config import DecisionConfig, RiskConfig
 from . import rules
+from .decision import RiskSources, decide
 from .rules import TxFacts, WalletFacts
 
 log = logging.getLogger(__name__)
@@ -40,10 +41,6 @@ class RiskStats:
             f"алертов по wallet (нов/обновл)={self.wallet_alerts}/{self.wallet_alerts_updated}, "
             f"помечено кошельков={self.wallets_flagged}, ML-оценок={self.wallets_ml_scored}"
         )
-
-
-def _reason(fired: list[tuple[str, Decimal]]) -> str:
-    return "; ".join(f"{name} (+{score})" for name, score in fired)
 
 
 def _emit_or_refresh_alert(conn, *, target_type, object_id, risk_id, title, description, level) -> str:
@@ -81,18 +78,20 @@ def _load_rules(conn, stats: RiskStats):
 
 
 # ---- Полный пересчёт по всей базе ----
-def score_risk(conn, cfg: RiskConfig, model=None) -> RiskStats:
-    """Полный расчёт (tx + кошельки). model (AnomalyModel) опционален: если задан,
-    к рулевому скору кошелька подмешивается ML-аномалия; иначе — только правила."""
+def score_risk(conn, cfg: RiskConfig, model=None, dcfg: DecisionConfig | None = None) -> RiskStats:
+    """Полный расчёт (tx + кошельки). Уровень риска определяет Decision Engine.
+    model (AnomalyModel) опционален: без него ИИ просто не участвует в решении."""
+    dcfg = dcfg or DecisionConfig.load()
     stats = RiskStats()
     tx_rules, wallet_rules = _load_rules(conn, stats)
     log.info("Активных правил: tx=%d, wallet=%d; ML=%s",
              len(tx_rules), len(wallet_rules), "вкл" if model else "выкл")
 
-    _score_transaction_rows(conn, cfg, tx_rules, db.get_transactions_for_scoring(conn), stats)
+    _score_transaction_rows(conn, cfg, dcfg, tx_rules,
+                            db.get_transactions_for_scoring(conn), stats)
 
     fmap = db.get_wallet_features_map(conn) if model else {}
-    _score_wallet_rows(conn, cfg, wallet_rules, db.get_wallets_for_scoring(conn),
+    _score_wallet_rows(conn, cfg, dcfg, wallet_rules, db.get_wallets_for_scoring(conn),
                        stats, model=model, features_map=fmap)
 
     conn.commit()
@@ -100,18 +99,20 @@ def score_risk(conn, cfg: RiskConfig, model=None) -> RiskStats:
 
 
 # ---- Инкрементальный пересчёт: только данные одного блока ----
-def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int, model=None) -> RiskStats:
+def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int,
+                model=None, dcfg: DecisionConfig | None = None) -> RiskStats:
     """Риск только по tx блока и затронутым кошелькам (для --follow --score)."""
+    dcfg = dcfg or DecisionConfig.load()
     stats = RiskStats()
     tx_rules, wallet_rules = _load_rules(conn, stats)
 
     tx_rows = db.get_transactions_for_scoring_by_block(conn, network_id, block_number)
-    _score_transaction_rows(conn, cfg, tx_rules, tx_rows, stats)
+    _score_transaction_rows(conn, cfg, dcfg, tx_rules, tx_rows, stats)
 
     wallet_ids = db.get_affected_wallet_ids_by_block(conn, network_id, block_number)
     wallet_rows = db.get_wallets_for_scoring_by_ids(conn, wallet_ids)
     fmap = db.get_wallet_features_map(conn, wallet_ids) if model else {}
-    _score_wallet_rows(conn, cfg, wallet_rules, wallet_rows, stats,
+    _score_wallet_rows(conn, cfg, dcfg, wallet_rules, wallet_rows, stats,
                        model=model, features_map=fmap)
 
     conn.commit()
@@ -119,20 +120,22 @@ def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int, model
 
 
 # ---- Только кошельки с ML-моделью (для --score-anomaly) ----
-def score_wallets(conn, cfg: RiskConfig, model) -> RiskStats:
-    """Пересчитать риск всех кошельков с подмешиванием ML (модель обязательна)."""
+def score_wallets(conn, cfg: RiskConfig, model, dcfg: DecisionConfig | None = None) -> RiskStats:
+    """Пересчитать риск всех кошельков с участием ИИ (модель обязательна)."""
+    dcfg = dcfg or DecisionConfig.load()
     stats = RiskStats()
     _, wallet_rules = _load_rules(conn, stats)
     fmap = db.get_wallet_features_map(conn)
-    _score_wallet_rows(conn, cfg, wallet_rules, db.get_wallets_for_scoring(conn),
+    _score_wallet_rows(conn, cfg, dcfg, wallet_rules, db.get_wallets_for_scoring(conn),
                        stats, model=model, features_map=fmap)
     conn.commit()
     return stats
 
 
 # ---- Общие помощники (полный и инкрементальный расчёт) ----
-def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None:
-    for tx_id, amount, sender_label, receiver_label in rows:
+def _score_transaction_rows(conn, cfg, dcfg, tx_rules, rows, stats: RiskStats) -> None:
+    for (tx_id, amount, sender_label, receiver_label,
+         sender_src, receiver_src) in rows:
         facts = TxFacts(
             tx_id=tx_id,
             amount_wei=int(amount),
@@ -145,21 +148,36 @@ def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None
             if rules.TX_RULES[rule.name](facts, cfg)
         ]
         rule_score = sum((s for _, s in fired), Decimal(0))
-        final_score = rule_score  # ml_score = 0
-        risk_level = rules.level_from_score(final_score)
+
+        # Hard Signals: метки участников транзакции.
+        hard = []
+        for lbl, src, who in ((sender_label, sender_src, "отправитель"),
+                              (receiver_label, receiver_src, "получатель")):
+            if lbl in dcfg.hard_signal_labels:
+                hard.append((lbl, src, who))
+
+        # Решение принимает Decision Engine (ML/Graph для транзакций пока нет).
+        decision = decide(RiskSources(
+            hard_signals=hard,
+            rule_score=float(rule_score),
+            fired_rules=[(n, float(s)) for n, s in fired],
+        ), dcfg)
+        risk_level = decision.level
+        final_score = rule_score  # справочное значение (совместимость)
 
         risk_id = db.insert_transaction_risk(
             conn, transaction_id=tx_id, rule_score=rule_score,
             ml_score=Decimal(0), final_score=final_score, risk_level=risk_level,
+            graph_score=None, decision=decision.to_json(),
         )
         stats.tx_evaluated += 1
         stats.tx_risk_rows += 1
 
-        if rules.alert_creation_needed(risk_level):
+        if risk_level != "LOW":
             outcome = _emit_or_refresh_alert(
                 conn, target_type="transaction", object_id=tx_id, risk_id=risk_id,
-                title=f"Рискованная транзакция: {risk_level} ({final_score})",
-                description=f"Сработавшие правила: {_reason(fired)}",
+                title=f"Рискованная транзакция: {risk_level} (уверенность {decision.confidence:.0%})",
+                description=" | ".join(decision.reasons),
                 level=rules.alert_level_from_risk_level(risk_level),
             )
             if outcome == "created":
@@ -168,10 +186,10 @@ def _score_transaction_rows(conn, cfg, tx_rules, rows, stats: RiskStats) -> None
                 stats.tx_alerts_updated += 1
 
 
-def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats,
+def _score_wallet_rows(conn, cfg, dcfg, wallet_rules, wallets, stats: RiskStats,
                        model=None, features_map=None) -> None:
     features_map = features_map or {}
-    for wallet_id, address, first_seen_at, label in wallets:
+    for wallet_id, address, first_seen_at, label, label_source in wallets:
         history = db.get_wallet_tx_history(conn, wallet_id)
         facts = WalletFacts(
             wallet_id=wallet_id,
@@ -188,26 +206,44 @@ def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats,
         ]
         rule_score = sum((s for _, s in fired), Decimal(0))
 
-        # ML-аномалия подмешивается только для кошельков с признаками.
+        # ML-аномалия считается только для кошельков с признаками.
         ml_score = Decimal(0)
+        ml_value = None
         ml_expl = None
         if model is not None and wallet_id in features_map:
             ml_int, ml_expl = model.score_one(features_map[wallet_id])
             ml_score = Decimal(ml_int)
-            # Гибрид: взвешенная комбинация правил и ИИ (шкала 0–100).
-            final_score = Decimal(str(round(
-                cfg.weight_rule * float(rule_score) + cfg.weight_ml * ml_int, 2)))
+            ml_value = float(ml_int)
             stats.wallets_ml_scored += 1
-        else:
-            final_score = rule_score  # без модели/признаков — только правила
 
-        risk_level = rules.level_from_score(final_score)
-        is_flagged = rules.alert_creation_needed(risk_level)
+        # Hard Signal по метке кошелька.
+        hard = ([(label, label_source, "кошелёк")]
+                if label in dcfg.hard_signal_labels else [])
+
+        # Решение принимает Decision Engine (graph_score пока None).
+        decision = decide(RiskSources(
+            hard_signals=hard,
+            rule_score=float(rule_score),
+            fired_rules=[(n, float(s)) for n, s in fired],
+            ml_score=ml_value,
+            ml_explanation=ml_expl,
+            graph_score=None,
+            label=label,
+        ), dcfg)
+        risk_level = decision.level
+        is_flagged = risk_level != "LOW"
+
+        # final_score — справочное значение для совместимости (шкала 0–100).
+        final_score = (
+            Decimal(str(round(cfg.weight_rule * float(rule_score)
+                              + cfg.weight_ml * ml_value, 2)))
+            if ml_value is not None else rule_score
+        )
 
         risk_id = db.insert_wallet_risk(
             conn, wallet_id=wallet_id, rule_score=rule_score,
             ml_score=ml_score, final_score=final_score, risk_level=risk_level,
-            ml_explanation=ml_expl,
+            ml_explanation=ml_expl, graph_score=None, decision=decision.to_json(),
         )
         db.update_wallet_risk_summary(
             conn, wallet_id=wallet_id, risk_score=final_score, is_flagged=is_flagged,
@@ -217,17 +253,12 @@ def _score_wallet_rows(conn, cfg, wallet_rules, wallets, stats: RiskStats,
         if is_flagged:
             stats.wallets_flagged += 1
 
-        if rules.alert_creation_needed(risk_level):
-            desc_parts = []
-            if fired:
-                desc_parts.append(f"Сработавшие правила: {_reason(fired)}")
-            if ml_score >= 40 and ml_expl:
-                desc_parts.append(f"ML-аномалия ({int(ml_score)}): {ml_expl}")
-            description = " | ".join(desc_parts) if desc_parts else "—"
+        if risk_level != "LOW":
             outcome = _emit_or_refresh_alert(
                 conn, target_type="wallet", object_id=wallet_id, risk_id=risk_id,
-                title=f"Рискованный кошелёк {address[:12]}…: {risk_level} ({final_score})",
-                description=description,
+                title=f"Рискованный кошелёк {address[:12]}…: {risk_level} "
+                      f"(уверенность {decision.confidence:.0%})",
+                description=" | ".join(decision.reasons),
                 level=rules.alert_level_from_risk_level(risk_level),
             )
             if outcome == "created":

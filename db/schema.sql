@@ -119,8 +119,10 @@ CREATE TABLE transaction_risk (
 
     rule_score      NUMERIC(6, 2) NOT NULL DEFAULT 0,
     ml_score        NUMERIC(6, 2) NOT NULL DEFAULT 0,
-    final_score     NUMERIC(6, 2) NOT NULL DEFAULT 0,
-    risk_level      VARCHAR(10)  NOT NULL,
+    graph_score     NUMERIC(6, 2),                       -- Graph Analysis (пока NULL)
+    final_score     NUMERIC(6, 2) NOT NULL DEFAULT 0,    -- справочное (совместимость)
+    risk_level      VARCHAR(10)  NOT NULL,               -- решение Decision Engine
+    decision        JSONB,                               -- объяснение решения
 
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
 
@@ -142,9 +144,11 @@ CREATE TABLE wallet_risk (
 
     rule_score  NUMERIC(6, 2) NOT NULL DEFAULT 0,
     ml_score    NUMERIC(6, 2) NOT NULL DEFAULT 0,
-    final_score NUMERIC(6, 2) NOT NULL DEFAULT 0,
-    risk_level  VARCHAR(10)  NOT NULL,
+    graph_score NUMERIC(6, 2),                           -- Graph Analysis (пока NULL)
+    final_score NUMERIC(6, 2) NOT NULL DEFAULT 0,        -- справочное (совместимость)
+    risk_level  VARCHAR(10)  NOT NULL,                   -- решение Decision Engine
     ml_explanation TEXT,                                 -- топ-признаки ML-аномалии
+    decision    JSONB,                                   -- объяснение решения
 
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
 

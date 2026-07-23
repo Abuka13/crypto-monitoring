@@ -55,6 +55,39 @@ class RiskConfig:
         )
 
 
+def _csv_set(name: str, default: str) -> frozenset[str]:
+    return frozenset(x.strip() for x in os.getenv(name, default).split(",") if x.strip())
+
+
+@dataclass(frozen=True)
+class DecisionConfig:
+    """Пороги и списки Decision Engine. Всё калибруется через .env, без правки кода."""
+
+    rule_critical: float      # rule_score для CRITICAL (при подтверждении)
+    rule_high: float          # rule_score для HIGH
+    rule_medium: float        # rule_score для MEDIUM
+    ml_high: float            # «высокий» ml_score
+    graph_high: float         # «высокий» graph_score (задел)
+    strong_rules: frozenset[str]        # правила повышенной значимости
+    hard_signal_labels: frozenset[str]  # метки уровня Hard Signal
+    trusted_labels: frozenset[str]      # известные легитимные (биржи): ИИ/граф в
+                                        # одиночку по ним алерт не создают
+
+    @staticmethod
+    def load() -> "DecisionConfig":
+        return DecisionConfig(
+            rule_critical=float(os.getenv("DECISION_RULE_CRITICAL", "75")),
+            rule_high=float(os.getenv("DECISION_RULE_HIGH", "50")),
+            rule_medium=float(os.getenv("DECISION_RULE_MEDIUM", "25")),
+            ml_high=float(os.getenv("DECISION_ML_HIGH", "70")),
+            graph_high=float(os.getenv("DECISION_GRAPH_HIGH", "70")),
+            strong_rules=_csv_set("DECISION_STRONG_RULES", "Связь с миксером"),
+            hard_signal_labels=_csv_set(
+                "DECISION_HARD_SIGNAL_LABELS", "sanctioned,blacklist,fraud"),
+            trusted_labels=_csv_set("DECISION_TRUSTED_LABELS", "exchange"),
+        )
+
+
 @dataclass(frozen=True)
 class Config:
     database_url: str
@@ -63,6 +96,7 @@ class Config:
     etherscan_chain_id: int
     requests_per_second: float     # лимит бесплатного ключа ~5/с
     risk: RiskConfig
+    decision: DecisionConfig
 
     @staticmethod
     def load() -> "Config":
@@ -75,4 +109,5 @@ class Config:
             etherscan_chain_id=int(os.getenv("ETHERSCAN_CHAIN_ID", "1")),
             requests_per_second=float(os.getenv("ETHERSCAN_RPS", "4")),
             risk=RiskConfig.load(),
+            decision=DecisionConfig.load(),
         )

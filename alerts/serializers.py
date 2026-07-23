@@ -65,14 +65,20 @@ class AlertDetailSerializer(serializers.ModelSerializer):
     risk_level = serializers.SerializerMethodField()
     fired_rules = serializers.SerializerMethodField()
     context = serializers.SerializerMethodField()
+    decision = serializers.SerializerMethodField()
 
     class Meta:
         model = Alert
         fields = [
             "id", "target_type", "level", "status",
             "title", "description", "created_at", "resolved_at",
-            "final_score", "risk_level", "fired_rules", "context",
+            "final_score", "risk_level", "fired_rules", "context", "decision",
         ]
+
+    def get_decision(self, obj: Alert) -> dict | None:
+        """Решение Decision Engine: уровень, уверенность, причины, вклад источников."""
+        risk = _related_risk(obj)
+        return getattr(risk, "decision", None) if risk else None
 
     def get_final_score(self, obj: Alert) -> float | None:
         risk = _related_risk(obj)
@@ -83,6 +89,13 @@ class AlertDetailSerializer(serializers.ModelSerializer):
         return risk.risk_level if risk else None
 
     def get_fired_rules(self, obj: Alert) -> list[dict]:
+        """Сработавшие правила: из решения Decision Engine, иначе — из описания."""
+        risk = _related_risk(obj)
+        decision = getattr(risk, "decision", None) if risk else None
+        if decision:
+            fired = (decision.get("sources", {}).get("rule", {}) or {}).get("fired")
+            if fired is not None:
+                return fired
         return parse_fired_rules(obj.description)
 
     def get_context(self, obj: Alert) -> dict | None:
@@ -199,9 +212,11 @@ class WalletDetailSerializer(WalletSerializer):
         return {
             "rule_score": float(wr.rule_score),
             "ml_score": float(wr.ml_score),
+            "graph_score": float(wr.graph_score) if wr.graph_score is not None else None,
             "final_score": float(wr.final_score),
             "risk_level": wr.risk_level,
             "ml_explanation": wr.ml_explanation,
+            "decision": wr.decision,
         }
 
 
