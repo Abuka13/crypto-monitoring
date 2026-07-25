@@ -29,7 +29,8 @@ class RiskStats:
     wallet_alerts: int = 0
     wallet_alerts_updated: int = 0
     wallets_flagged: int = 0
-    wallets_ml_scored: int = 0    # кошельков с ML-оценкой (есть признаки)
+    wallets_ml_scored: int = 0       # кошельков с ML-оценкой (есть признаки)
+    wallets_graph_scored: int = 0    # кошельков с graph-оценкой (есть граф-признаки)
     skipped_rules: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
@@ -39,7 +40,8 @@ class RiskStats:
             f"кошельков оценено={self.wallets_evaluated}, "
             f"оценок wallet={self.wallet_risk_rows}, "
             f"алертов по wallet (нов/обновл)={self.wallet_alerts}/{self.wallet_alerts_updated}, "
-            f"помечено кошельков={self.wallets_flagged}, ML-оценок={self.wallets_ml_scored}"
+            f"помечено кошельков={self.wallets_flagged}, "
+            f"ML-оценок={self.wallets_ml_scored}, граф-оценок={self.wallets_graph_scored}"
         )
 
 
@@ -91,8 +93,9 @@ def score_risk(conn, cfg: RiskConfig, model=None, dcfg: DecisionConfig | None = 
                             db.get_transactions_for_scoring(conn), stats)
 
     fmap = db.get_wallet_features_map(conn) if model else {}
+    gmap = db.get_wallet_graph_map(conn)  # graph подмешивается, если посчитан
     _score_wallet_rows(conn, cfg, dcfg, wallet_rules, db.get_wallets_for_scoring(conn),
-                       stats, model=model, features_map=fmap)
+                       stats, model=model, features_map=fmap, graph_map=gmap)
 
     conn.commit()
     return stats
@@ -112,22 +115,25 @@ def score_block(conn, cfg: RiskConfig, network_id: int, block_number: int,
     wallet_ids = db.get_affected_wallet_ids_by_block(conn, network_id, block_number)
     wallet_rows = db.get_wallets_for_scoring_by_ids(conn, wallet_ids)
     fmap = db.get_wallet_features_map(conn, wallet_ids) if model else {}
+    gmap = db.get_wallet_graph_map(conn, wallet_ids)
     _score_wallet_rows(conn, cfg, dcfg, wallet_rules, wallet_rows, stats,
-                       model=model, features_map=fmap)
+                       model=model, features_map=fmap, graph_map=gmap)
 
     conn.commit()
     return stats
 
 
-# ---- Только кошельки с ML-моделью (для --score-anomaly) ----
-def score_wallets(conn, cfg: RiskConfig, model, dcfg: DecisionConfig | None = None) -> RiskStats:
-    """Пересчитать риск всех кошельков с участием ИИ (модель обязательна)."""
+# ---- Только кошельки: применить ИИ и/или граф (для --score-anomaly / --score-graph) ----
+def score_wallets(conn, cfg: RiskConfig, model=None, dcfg: DecisionConfig | None = None) -> RiskStats:
+    """Пересчитать риск всех кошельков. model — опционально (ИИ); граф
+    подмешивается автоматически, если посчитан (wallet_graph_features)."""
     dcfg = dcfg or DecisionConfig.load()
     stats = RiskStats()
     _, wallet_rules = _load_rules(conn, stats)
-    fmap = db.get_wallet_features_map(conn)
+    fmap = db.get_wallet_features_map(conn) if model else {}
+    gmap = db.get_wallet_graph_map(conn)
     _score_wallet_rows(conn, cfg, dcfg, wallet_rules, db.get_wallets_for_scoring(conn),
-                       stats, model=model, features_map=fmap)
+                       stats, model=model, features_map=fmap, graph_map=gmap)
     conn.commit()
     return stats
 
@@ -187,8 +193,9 @@ def _score_transaction_rows(conn, cfg, dcfg, tx_rules, rows, stats: RiskStats) -
 
 
 def _score_wallet_rows(conn, cfg, dcfg, wallet_rules, wallets, stats: RiskStats,
-                       model=None, features_map=None) -> None:
+                       model=None, features_map=None, graph_map=None) -> None:
     features_map = features_map or {}
+    graph_map = graph_map or {}
     for wallet_id, address, first_seen_at, label, label_source in wallets:
         history = db.get_wallet_tx_history(conn, wallet_id)
         facts = WalletFacts(
@@ -216,18 +223,28 @@ def _score_wallet_rows(conn, cfg, dcfg, wallet_rules, wallets, stats: RiskStats,
             ml_value = float(ml_int)
             stats.wallets_ml_scored += 1
 
+        # Граф-аномалия подмешивается, если посчитана (--build-graph).
+        graph_value = None
+        graph_expl = None
+        graph_dec = None
+        if wallet_id in graph_map:
+            graph_value, graph_expl = graph_map[wallet_id]
+            graph_dec = Decimal(str(graph_value))
+            stats.wallets_graph_scored += 1
+
         # Hard Signal по метке кошелька.
         hard = ([(label, label_source, "кошелёк")]
                 if label in dcfg.hard_signal_labels else [])
 
-        # Решение принимает Decision Engine (graph_score пока None).
+        # Решение принимает Decision Engine (граф — источник наравне с ML).
         decision = decide(RiskSources(
             hard_signals=hard,
             rule_score=float(rule_score),
             fired_rules=[(n, float(s)) for n, s in fired],
             ml_score=ml_value,
             ml_explanation=ml_expl,
-            graph_score=None,
+            graph_score=graph_value,
+            graph_explanation=graph_expl,
             label=label,
         ), dcfg)
         risk_level = decision.level
@@ -243,7 +260,7 @@ def _score_wallet_rows(conn, cfg, dcfg, wallet_rules, wallets, stats: RiskStats,
         risk_id = db.insert_wallet_risk(
             conn, wallet_id=wallet_id, rule_score=rule_score,
             ml_score=ml_score, final_score=final_score, risk_level=risk_level,
-            ml_explanation=ml_expl, graph_score=None, decision=decision.to_json(),
+            ml_explanation=ml_expl, graph_score=graph_dec, decision=decision.to_json(),
         )
         db.update_wallet_risk_summary(
             conn, wallet_id=wallet_id, risk_score=final_score, is_flagged=is_flagged,

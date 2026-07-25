@@ -5,7 +5,7 @@ import argparse
 import logging
 import sys
 
-from . import anomaly, db, features, follow, ingest
+from . import anomaly, db, features, follow, graph, ingest
 from .config import Config, ConfigError
 from .risk import engine as risk_engine
 from .sources.etherscan import EtherscanSource
@@ -51,6 +51,16 @@ def _build_parser() -> argparse.ArgumentParser:
     group.add_argument(
         "--score-anomaly", action="store_true",
         help="Применить обученную модель: обновить ml_score и пересчитать риск кошельков",
+    )
+    group.add_argument(
+        "--build-graph", action="store_true",
+        help="Построить граф переводов и посчитать граф-признаки кошельков "
+             "(in/out-степень, центральность, связь с рисковыми узлами) в wallet_graph_features",
+    )
+    group.add_argument(
+        "--score-graph", action="store_true",
+        help="Подмешать graph_score в риск кошельков и пересчитать алерты "
+             "(нужен предварительный --build-graph)",
     )
     group.add_argument(
         "--reset-data", action="store_true",

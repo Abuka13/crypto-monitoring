@@ -422,6 +422,78 @@ def upsert_wallet_features(conn, wallet_id: int, feats: dict) -> None:
         )
 
 
+# ---- Граф-признаки кошельков (Graph Analysis) ----
+
+def get_aggregated_edges(conn) -> list[tuple]:
+    """Рёбра графа переводов: (sender_id, receiver_id, count, sum_wei)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT sender_wallet_id, receiver_wallet_id, COUNT(*), SUM(amount)
+            FROM tx
+            GROUP BY sender_wallet_id, receiver_wallet_id
+            """
+        )
+        return cur.fetchall()
+
+
+def get_all_wallet_labels(conn) -> dict[int, str | None]:
+    """{wallet_id: label} по всем кошелькам (для метрики связи с рисковыми узлами)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, label FROM wallet")
+        return {r[0]: r[1] for r in cur.fetchall()}
+
+
+def get_graph_focus_wallet_ids(conn, min_tx: int) -> list[int]:
+    """Фокус-набор: кошельки с >= min_tx транзакций ИЛИ размеченные (с меткой)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM wallet WHERE transaction_count >= %s OR label IS NOT NULL "
+            "ORDER BY id",
+            (min_tx,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
+_GRAPH_COLS = (
+    "in_degree", "out_degree", "degree_centrality", "risky_neighbors",
+    "risky_neighbor_ratio", "transit_ratio", "fan_in_ratio", "fan_out_ratio",
+    "graph_score", "graph_explanation",
+)
+
+
+def upsert_wallet_graph_features(conn, wallet_id: int, feats: dict) -> None:
+    """Записать/обновить граф-признаки кошелька (идемпотентно)."""
+    cols = list(_GRAPH_COLS)
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            INSERT INTO wallet_graph_features (wallet_id, {', '.join(cols)}, computed_at)
+            VALUES (%s, {', '.join(['%s'] * len(cols))}, now())
+            ON CONFLICT (wallet_id) DO UPDATE SET
+                {', '.join(f'{c} = EXCLUDED.{c}' for c in cols)},
+                computed_at = now()
+            """,
+            (wallet_id, *[feats[c] for c in cols]),
+        )
+
+
+def get_wallet_graph_map(conn, wallet_ids: list[int] | None = None) -> dict[int, tuple]:
+    """{wallet_id: (graph_score float, graph_explanation)} из wallet_graph_features."""
+    with conn.cursor() as cur:
+        if wallet_ids is None:
+            cur.execute("SELECT wallet_id, graph_score, graph_explanation FROM wallet_graph_features")
+        else:
+            if not wallet_ids:
+                return {}
+            cur.execute(
+                "SELECT wallet_id, graph_score, graph_explanation FROM wallet_graph_features "
+                "WHERE wallet_id = ANY(%s)",
+                (list(wallet_ids),),
+            )
+        return {r[0]: (float(r[1]), r[2]) for r in cur.fetchall()}
+
+
 # ---- Метки адресов ----
 
 def upsert_wallet_label(

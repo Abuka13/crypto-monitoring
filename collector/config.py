@@ -89,6 +89,34 @@ class DecisionConfig:
 
 
 @dataclass(frozen=True)
+class GraphConfig:
+    """Веса и нормировки Graph Analysis. Всё калибруется через .env, без правки кода."""
+
+    min_tx: int                       # кошельки с >= min_tx tx попадают в фокус-набор
+    risky_labels: frozenset[str]      # метки соседей, считающихся «рисковыми»
+    centrality_ref: int               # степень узла, дающая полную центральность (=1.0)
+    fan_ref: int                      # число связей, дающее полную веерность (=1.0)
+    # Веса компонентов итогового graph_score (в сумме ~1; нормируются автоматически).
+    w_risky: float                    # связь с рисковыми узлами (самая важная метрика)
+    w_centrality: float               # проходность/центральность
+    w_transit: float                  # транзитность (deposit-and-forward)
+    w_fan: float                      # веерность (массовый сбор/распыление)
+
+    @staticmethod
+    def load() -> "GraphConfig":
+        return GraphConfig(
+            min_tx=int(os.getenv("GRAPH_MIN_TX", "3")),
+            risky_labels=_csv_set("GRAPH_RISKY_LABELS", "mixer,sanctioned,fraud,blacklist"),
+            centrality_ref=int(os.getenv("GRAPH_CENTRALITY_REF", "500")),
+            fan_ref=int(os.getenv("GRAPH_FAN_REF", "100")),
+            w_risky=float(os.getenv("GRAPH_W_RISKY", "0.5")),
+            w_centrality=float(os.getenv("GRAPH_W_CENTRALITY", "0.2")),
+            w_transit=float(os.getenv("GRAPH_W_TRANSIT", "0.2")),
+            w_fan=float(os.getenv("GRAPH_W_FAN", "0.1")),
+        )
+
+
+@dataclass(frozen=True)
 class Config:
     database_url: str
     etherscan_api_key: str
@@ -97,6 +125,7 @@ class Config:
     requests_per_second: float     # лимит бесплатного ключа ~5/с
     risk: RiskConfig
     decision: DecisionConfig
+    graph: GraphConfig
 
     @staticmethod
     def load() -> "Config":
@@ -110,4 +139,5 @@ class Config:
             requests_per_second=float(os.getenv("ETHERSCAN_RPS", "4")),
             risk=RiskConfig.load(),
             decision=DecisionConfig.load(),
+            graph=GraphConfig.load(),
         )

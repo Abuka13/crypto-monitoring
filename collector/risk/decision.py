@@ -108,8 +108,13 @@ def decide(src: RiskSources, cfg: DecisionConfig) -> Decision:
         level = "LOW"
 
     # --- Ограничения на ИИ и Graph ---
-    # 1) ИИ/Graph в одиночку (без правил и Hard Signal) — максимум MEDIUM.
-    if not has_hard and not rule_high and not strong_fired and _ORDER[level] > _ORDER["MEDIUM"]:
+    # 1) ИИ/Graph В ОДИНОЧКУ (единственный высокий сигнал — один нерулевой модуль,
+    #    без правил и Hard Signal) — максимум MEDIUM. Но ML и Graph — РАЗНЫЕ
+    #    независимые модули: если высокий сигнал дали оба, они уже не «в одиночку»
+    #    и вместе могут поднять уровень до HIGH (два независимых источника).
+    non_rule_high = [s for s in high_sources if s != "rule"]
+    alone = not rule_high and len(non_rule_high) <= 1
+    if not has_hard and not strong_fired and alone and _ORDER[level] > _ORDER["MEDIUM"]:
         level = "MEDIUM"
     # 2) ИИ никогда не снижает уровень, обусловленный правилами.
     level = _max_level(level, _rule_only_level(src.rule_score, fired_names, cfg))
@@ -166,9 +171,9 @@ def _build_reasons(src: RiskSources, cfg: DecisionConfig, strong_fired: list[str
         tail = f" — {src.ml_explanation}" if src.ml_explanation else ""
         reasons.append(f"ML: вероятность нетипичного поведения {int(src.ml_score)}%{tail}")
 
-    if src.graph_score is not None:
+    if src.graph_score is not None and src.graph_score > 0:
         tail = f" — {src.graph_explanation}" if src.graph_explanation else ""
-        reasons.append(f"Граф: подозрительные связи {int(src.graph_score)}%{tail}")
+        reasons.append(f"Граф: подозрительное положение в сети {int(src.graph_score)}%{tail}")
 
     return reasons or ["Существенных признаков риска не обнаружено"]
 

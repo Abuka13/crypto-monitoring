@@ -198,6 +198,36 @@ CREATE INDEX idx_wallet_features_txtotal ON wallet_features (tx_total DESC);
 
 
 -- ------------------------------------------------------------
+-- 9. WalletGraphFeatures — граф-признаки кошелька (Graph Analysis)
+--    Одна строка на кошелёк. Оценивает риск по ПОЛОЖЕНИЮ узла в сети
+--    переводов (in/out-степень, центральность, связь с рисковыми узлами,
+--    транзитность, веерность). Заполняется командой --build-graph; итоговый
+--    graph_score подмешивается в wallet_risk через Decision Engine.
+-- ------------------------------------------------------------
+CREATE TABLE wallet_graph_features (
+    wallet_id            BIGINT PRIMARY KEY REFERENCES wallet(id) ON DELETE CASCADE,
+
+    in_degree            INTEGER NOT NULL,          -- уникальных входящих связей (отправителей)
+    out_degree           INTEGER NOT NULL,          -- уникальных исходящих связей (получателей)
+    degree_centrality    DOUBLE PRECISION NOT NULL, -- «проходность» узла (нормированная степень)
+
+    risky_neighbors      INTEGER NOT NULL,          -- соседей с меткой mixer/sanctioned/fraud
+    risky_neighbor_ratio DOUBLE PRECISION NOT NULL, -- доля рисковых среди всех соседей
+
+    transit_ratio        DOUBLE PRECISION NOT NULL, -- транзитность: min(in,out)/max(in,out) по потоку
+    fan_in_ratio         DOUBLE PRECISION NOT NULL, -- веерность сбора (много входящих связей)
+    fan_out_ratio        DOUBLE PRECISION NOT NULL, -- веерность распыления (много исходящих связей)
+
+    graph_score          NUMERIC(6, 2) NOT NULL,    -- итоговый графовый риск 0..100
+    graph_explanation    TEXT,                      -- какие метрики подняли оценку
+
+    computed_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_wallet_graph_score ON wallet_graph_features (graph_score DESC);
+
+
+-- ------------------------------------------------------------
 -- 7. Alert — оповещение для аналитика
 --    Ссылается ЛИБО на transaction_risk, ЛИБО на wallet_risk.
 --    CHECK гарантирует, что заполнен ровно один из двух FK —
