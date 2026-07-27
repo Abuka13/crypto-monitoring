@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import Alert, Rule, Tx, Wallet, WalletFeatures
+from .models import Alert, Rule, Tx, Wallet, WalletFeatures, WalletGraphFeatures
 from .transitions import VALID_STATUSES
 
 # Формат описания от Rule Engine: «Сработавшие правила: Имя (+балл); ...».
@@ -38,6 +38,14 @@ def parse_fired_rules(description: str | None) -> list[dict]:
 def _related_risk(alert: Alert):
     """Связанная оценка риска (одна из двух) или None."""
     return alert.transaction_risk or alert.wallet_risk
+
+
+def _graph_explanation(wallet: Wallet) -> str | None:
+    """Объяснение графового риска кошелька (если граф посчитан)."""
+    try:
+        return wallet.graph_features.graph_explanation
+    except WalletGraphFeatures.DoesNotExist:
+        return None
 
 
 class AlertListSerializer(serializers.ModelSerializer):
@@ -131,10 +139,12 @@ class AlertDetailSerializer(serializers.ModelSerializer):
                 "label_source": w.label_source,
                 "first_seen_at": w.first_seen_at,
                 "last_seen_at": w.last_seen_at,
-                # Вклад ИИ в эту оценку риска
+                # Вклад ИИ и графа в эту оценку риска
                 "rule_score": float(wr.rule_score),
                 "ml_score": float(wr.ml_score),
                 "ml_explanation": wr.ml_explanation,
+                "graph_score": float(wr.graph_score) if wr.graph_score is not None else None,
+                "graph_explanation": _graph_explanation(w),
             }
         return None
 
@@ -189,14 +199,28 @@ class WalletFeaturesSerializer(serializers.ModelSerializer):
     def get_max_amount(self, o) -> str: return _wei(o.max_amount)
 
 
+class WalletGraphFeaturesSerializer(serializers.ModelSerializer):
+    """Граф-признаки кошелька (положение в сети переводов). graph_score — числом."""
+
+    graph_score = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WalletGraphFeatures
+        exclude = ["wallet"]
+
+    def get_graph_score(self, o) -> float:
+        return float(o.graph_score)
+
+
 class WalletDetailSerializer(WalletSerializer):
-    """Детали кошелька: поля списка + признаки + последняя оценка риска (с ML)."""
+    """Детали кошелька: поля списка + признаки + граф-признаки + последняя оценка риска."""
 
     features = serializers.SerializerMethodField()
+    graph_features = serializers.SerializerMethodField()
     latest_risk = serializers.SerializerMethodField()
 
     class Meta(WalletSerializer.Meta):
-        fields = WalletSerializer.Meta.fields + ["features", "latest_risk"]
+        fields = WalletSerializer.Meta.fields + ["features", "graph_features", "latest_risk"]
 
     def get_features(self, obj: Wallet) -> dict | None:
         try:
@@ -204,6 +228,13 @@ class WalletDetailSerializer(WalletSerializer):
         except WalletFeatures.DoesNotExist:
             return None
         return WalletFeaturesSerializer(feats).data
+
+    def get_graph_features(self, obj: Wallet) -> dict | None:
+        try:
+            gf = obj.graph_features
+        except WalletGraphFeatures.DoesNotExist:
+            return None
+        return WalletGraphFeaturesSerializer(gf).data
 
     def get_latest_risk(self, obj: Wallet) -> dict | None:
         wr = obj.walletrisk_set.order_by("-created_at", "-id").first()
@@ -216,6 +247,7 @@ class WalletDetailSerializer(WalletSerializer):
             "final_score": float(wr.final_score),
             "risk_level": wr.risk_level,
             "ml_explanation": wr.ml_explanation,
+            "graph_explanation": _graph_explanation(obj),
             "decision": wr.decision,
         }
 

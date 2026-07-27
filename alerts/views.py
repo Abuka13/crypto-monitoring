@@ -35,6 +35,7 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
             "transaction_risk__transaction__sender_wallet",
             "transaction_risk__transaction__receiver_wallet",
             "wallet_risk__wallet",
+            "wallet_risk__wallet__graph_features",  # объяснение графового риска
         )
         .all()
         .order_by("-created_at")

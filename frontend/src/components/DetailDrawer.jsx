@@ -39,6 +39,7 @@ function detailVM(selected, kind, detailData, t){
           {k:t.f.sent, v:weiToEth(c.total_sent, 3) + ' ETH'},
           {k:t.f.riskscore, v:String(Math.round(c.risk_score))},
           (c.ml_score != null && c.ml_score > 0) ? {k:t.f.mlScore, v:String(Math.round(c.ml_score))} : null,
+          (c.graph_score != null && c.graph_score > 0) ? {k:t.f.graphScore, v:String(Math.round(c.graph_score))} : null,
         ].filter(Boolean);
         mlExplanation = c.ml_explanation || null;
       }

@@ -96,7 +96,9 @@ class GraphConfig:
     risky_labels: frozenset[str]      # метки соседей, считающихся «рисковыми»
     centrality_ref: int               # степень узла, дающая полную центральность (=1.0)
     fan_ref: int                      # число связей, дающее полную веерность (=1.0)
-    # Веса компонентов итогового graph_score (в сумме ~1; нормируются автоматически).
+    # Веса = МАКСИМАЛЬНЫЙ вклад фактора по отдельности (агрегация noisy-OR, не среднее).
+    # Сумма не обязана равняться 1: 0.75 у «связи с рисковыми» означает, что один
+    # такой признак сам по себе даёт ~75 баллов, а совпадение факторов усиливает.
     w_risky: float                    # связь с рисковыми узлами (самая важная метрика)
     w_centrality: float               # проходность/центральность
     w_transit: float                  # транзитность (deposit-and-forward)
@@ -109,10 +111,10 @@ class GraphConfig:
             risky_labels=_csv_set("GRAPH_RISKY_LABELS", "mixer,sanctioned,fraud,blacklist"),
             centrality_ref=int(os.getenv("GRAPH_CENTRALITY_REF", "500")),
             fan_ref=int(os.getenv("GRAPH_FAN_REF", "100")),
-            w_risky=float(os.getenv("GRAPH_W_RISKY", "0.5")),
-            w_centrality=float(os.getenv("GRAPH_W_CENTRALITY", "0.2")),
-            w_transit=float(os.getenv("GRAPH_W_TRANSIT", "0.2")),
-            w_fan=float(os.getenv("GRAPH_W_FAN", "0.1")),
+            w_risky=float(os.getenv("GRAPH_W_RISKY", "0.75")),
+            w_centrality=float(os.getenv("GRAPH_W_CENTRALITY", "0.35")),
+            w_transit=float(os.getenv("GRAPH_W_TRANSIT", "0.30")),
+            w_fan=float(os.getenv("GRAPH_W_FAN", "0.20")),
         )
 
 

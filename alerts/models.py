@@ -146,6 +146,29 @@ class WalletFeatures(models.Model):
         db_table = "wallet_features"
 
 
+class WalletGraphFeatures(models.Model):
+    """Граф-признаки кошелька (положение в сети переводов). Одна строка на кошелёк."""
+    wallet = models.OneToOneField(
+        "Wallet", models.DO_NOTHING, db_column="wallet_id",
+        primary_key=True, related_name="graph_features",
+    )
+    in_degree = models.IntegerField()
+    out_degree = models.IntegerField()
+    degree_centrality = models.FloatField()
+    risky_neighbors = models.IntegerField()
+    risky_neighbor_ratio = models.FloatField()
+    transit_ratio = models.FloatField()
+    fan_in_ratio = models.FloatField()
+    fan_out_ratio = models.FloatField()
+    graph_score = models.DecimalField(max_digits=6, decimal_places=2)
+    graph_explanation = models.TextField(null=True, blank=True)
+    computed_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "wallet_graph_features"
+
+
 class Alert(models.Model):
     id = models.BigAutoField(primary_key=True)
     transaction_risk = models.ForeignKey(

@@ -66,10 +66,15 @@ def build_graph(conn) -> tuple[nx.DiGraph, dict[int, str | None]]:
 
 
 def _norm(value: float, ref: float) -> float:
-    """Нормировка тяжелохвостой величины в 0..1 через лог-шкалу относительно ref."""
-    if value <= 0 or ref <= 1:
+    """Нормировка степени узла в 0..1 относительно ref (value=ref -> 1.0).
+
+    Корень, а не логарифм: log1p слишком сильно сжимает шкалу — узел с 2 связями
+    получал бы 0.18 при ref=500, что бессмысленно. sqrt даёт мягкий рост и при
+    этом оставляет малые степени малыми (2 из 500 -> 0.06).
+    """
+    if value <= 0 or ref <= 0:
         return 0.0
-    return min(1.0, math.log1p(value) / math.log1p(ref))
+    return min(1.0, math.sqrt(value / ref))
 
 
 def compute_wallet_graph(graph: nx.DiGraph, labels: dict, wallet_id: int,
@@ -106,11 +111,19 @@ def compute_wallet_graph(graph: nx.DiGraph, labels: dict, wallet_id: int,
     c_transit = transit
     c_fan = max(fan_in, fan_out)
 
+    # Агрегация по принципу «независимых факторов риска» (noisy-OR), а не средним:
+    #     score = 1 - Π(1 - w_i · c_i)
+    # Взвешенное среднее РАЗБАВЛЯЕТ сильный сигнал отсутствующими: кошелёк,
+    # у которого единственный сосед — миксер, максимизирует главную метрику, но
+    # при усреднении получал бы ~55 из-за нулевых остальных. Здесь же каждый вес —
+    # это максимальный вклад фактора в отдельности: связь с рисковым узлом сама по
+    # себе даёт ~w_risky·100, а совпадение факторов усиливает оценку.
     weights = ((cfg.w_risky, c_risky), (cfg.w_centrality, c_centrality),
                (cfg.w_transit, c_transit), (cfg.w_fan, c_fan))
-    wsum = sum(w for w, _ in weights) or 1.0
-    score = 100.0 * sum(w * c for w, c in weights) / wsum
-    score = max(0.0, min(100.0, score))
+    residual = 1.0
+    for w, c in weights:
+        residual *= 1.0 - max(0.0, min(1.0, w * c))
+    score = max(0.0, min(100.0, 100.0 * (1.0 - residual)))
 
     explanation = _explain(risky, risky_ratio, in_degree, out_degree,
                            c_centrality, transit, fan_in, fan_out, weights)
@@ -138,16 +151,17 @@ def _explain(risky, risky_ratio, in_deg, out_deg, c_centrality, transit,
         parts.append((w_risky * c_risky,
                       f"прямая связь с рисковыми узлами: {risky} "
                       f"(миксер/санкции), доля {risky_ratio:.0%}"))
-    if c_centrality > 0.15:
+    if c_centrality >= 0.3:
         parts.append((w_cent * c_centrality,
                       f"высокая проходность: {in_deg} входящих / {out_deg} исходящих связей"))
-    if transit > 0.5:
+    if transit >= 0.5:
         parts.append((w_tr * transit,
                       f"транзитный узел (входящий поток ≈ исходящему, {transit:.0%})"))
     fan = max(fan_in, fan_out)
-    if fan > 0.3:
-        kind = "сбор средств" if fan_in >= fan_out else "распыление средств"
-        parts.append((w_fan * fan, f"веерность ({kind})"))
+    if fan >= 0.3:
+        kind = f"сбор средств от {in_deg} адресов" if fan_in >= fan_out \
+            else f"распыление средств на {out_deg} адресов"
+        parts.append((w_fan * fan, f"веерность: {kind}"))
 
     parts.sort(reverse=True)
     top = [text for _, text in parts[:3]]

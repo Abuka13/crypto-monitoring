@@ -133,7 +133,7 @@ def decide(src: RiskSources, cfg: DecisionConfig) -> Decision:
     if suppressed:
         reasons = [f"Известная легитимная сущность (метка «{src.label}») — "
                    f"аномалия ИИ/графа без срабатывания правил не считается сигналом"]
-    confidence = _confidence(has_hard, n_high, level)
+    confidence = _confidence(has_hard, n_high, level, suppressed)
     sources = {
         "hard_signal": {
             "active": has_hard,
@@ -178,7 +178,7 @@ def _build_reasons(src: RiskSources, cfg: DecisionConfig, strong_fired: list[str
     return reasons or ["Существенных признаков риска не обнаружено"]
 
 
-def _confidence(has_hard: bool, n_high: int, level: str) -> float:
+def _confidence(has_hard: bool, n_high: int, level: str, suppressed: bool = False) -> float:
     """Уверенность = согласованность независимых источников (не выдуманная вероятность).
 
     Hard Signal — документально подтверждённый факт (санкционный список), поэтому
@@ -190,6 +190,10 @@ def _confidence(has_hard: bool, n_high: int, level: str) -> float:
     """
     if has_hard:
         return 0.99
+    # Подавление доверием: уверенность относится к вердикту LOW и опирается на
+    # documentary-факт (известная биржа), а не на число сработавших аномалий.
+    if suppressed:
+        return 0.90
     if n_high >= 3:
         return 0.95
     if n_high == 2:

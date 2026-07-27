@@ -301,6 +301,73 @@ def _run_score_anomaly(conn, config) -> int:
     return 0
 
 
+def _run_build_graph(conn, config) -> int:
+    print("Построение графа переводов и расчёт граф-признаков кошельков ...")
+    stats = graph.compute_all(conn, config.graph)
+    print(f"Готово: {stats}")
+    _print_graph_summary(conn)
+    return 0
+
+
+def _print_graph_summary(conn) -> None:
+    """Топ-10 по graph_score с объяснением + sanity-check по биржам."""
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM wallet_graph_features")
+    print(f"\nВсего строк граф-признаков: {cur.fetchone()[0]}")
+
+    cur.execute(
+        """
+        SELECT count(*) FILTER (WHERE graph_score >= 70),
+               count(*) FILTER (WHERE risky_neighbors > 0)
+        FROM wallet_graph_features
+        """
+    )
+    high, risky = cur.fetchone()
+    print(f"С высоким graph_score (>=70): {high}; со связью с рисковыми узлами: {risky}")
+
+    print("\nТоп-10 по graph_score:")
+    cur.execute(
+        """
+        SELECT w.address, w.label, g.graph_score, g.in_degree, g.out_degree,
+               g.risky_neighbors, g.graph_explanation
+        FROM wallet_graph_features g JOIN wallet w ON w.id = g.wallet_id
+        ORDER BY g.graph_score DESC, g.risky_neighbors DESC LIMIT 10
+        """
+    )
+    for addr, label, score, ind, outd, risky_n, expl in cur.fetchall():
+        tag = f" [{label}]" if label else ""
+        print(f"  graph={float(score):5.1f}  {addr[:14]}…{tag}  вх/исх={ind}/{outd} рисковых={risky_n}")
+        print(f"        {expl}")
+
+    print("\nSanity-check — размеченные биржи (высокий graph_score ожидаем, но алертов "
+          "по графу быть не должно — суппрессия trusted_labels):")
+    cur.execute(
+        """
+        SELECT w.address, g.graph_score, g.in_degree, g.out_degree, g.risky_neighbors
+        FROM wallet_graph_features g JOIN wallet w ON w.id = g.wallet_id
+        WHERE w.label = 'exchange' ORDER BY g.graph_score DESC
+        """
+    )
+    rows = cur.fetchall()
+    for addr, score, ind, outd, risky_n in rows:
+        print(f"  graph={float(score):5.1f}  {addr[:14]}… [exchange]  вх/исх={ind}/{outd} рисковых={risky_n}")
+    if not rows:
+        print("  (нет бирж в фокус-наборе графа)")
+
+
+def _run_score_graph(conn, config) -> int:
+    if not db.get_wallet_graph_map(conn):
+        print("Граф-признаки не посчитаны. Сначала: python -m collector --build-graph",
+              file=sys.stderr)
+        return 2
+    model = anomaly.AnomalyModel.load()  # если обучена — ИИ тоже участвует
+    print(f"Пересчёт риска кошельков с граф-оценкой{' и ML' if model else ''} ...")
+    stats = risk_engine.score_wallets(conn, config.risk, model, dcfg=config.decision)
+    print(f"Готово: {stats}")
+    _print_alerts_sample(conn)
+    return 0
+
+
 def _print_alerts_sample(conn) -> None:
     alerts = db.get_sample_alerts(conn, limit=5)
     if not alerts:
@@ -356,6 +423,10 @@ def main(argv: list[str] | None = None) -> int:
             return _run_train_anomaly(conn, config, args)
         if args.score_anomaly:
             return _run_score_anomaly(conn, config)
+        if args.build_graph:
+            return _run_build_graph(conn, config)
+        if args.score_graph:
+            return _run_score_graph(conn, config)
         if args.reset_data:
             return _run_reset(conn, args.yes)
         if args.follow:

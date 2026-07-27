@@ -91,10 +91,23 @@ python -m collector --compute-features --min-tx 10
 python -m collector --train-anomaly                    # обучить + сохранить в models/
 python -m collector --train-anomaly --contamination 0.1  # доля аномалий выше
 python -m collector --score-anomaly                    # ml_score + пересчёт риска кошельков
+
+# Граф-анализ сети переводов (NetworkX): построить -> применить
+python -m collector --build-graph                      # граф-метрики -> wallet_graph_features
+python -m collector --score-graph                      # graph_score + пересчёт риска кошельков
 ```
 
 Порядок ML-этапа: `--compute-features` → `--train-anomaly` → `--score-anomaly`.
 После обучения модель автоматически подмешивается в `--score-risk` и `--follow --score`.
+
+Порядок граф-этапа: `--seed-labels` (метки нужны для метрики «связь с рисковыми
+узлами») → `--build-graph` → `--score-graph`. Обе команды идемпотентны. После
+`--build-graph` граф автоматически подмешивается и в `--score-risk`, и в
+`--follow --score`; если граф не посчитан — система работает как раньше.
+
+`--build-graph` печатает топ-10 кошельков по `graph_score` с объяснением и
+sanity-check по биржам (высокий граф-скор у биржи — норма, но алерта быть не должно:
+срабатывает подавление доверенных сущностей `DECISION_TRUSTED_LABELS`).
 
 ## 4. Очистка данных (сохраняет справочники)
 
@@ -170,4 +183,34 @@ RISK_HIGH_FREQ_COUNT=50                         # «Высокая частот�
 RISK_HIGH_FREQ_WINDOW_HOURS=24                  #   в окне M часов
 RISK_STRUCTURING_SMALL_WEI=10000000000000000    # «Дробление»: порог «мелкой» суммы (0.01 ETH)
 RISK_STRUCTURING_MIN_COUNT=30                   #   и минимум таких операций (mainnet)
+```
+
+## 9. Настройка граф-анализа
+
+Веса — это МАКСИМАЛЬНЫЙ вклад фактора по отдельности (агрегация noisy-OR, не среднее),
+поэтому их сумма не обязана равняться 1. После правки — перезапусти `--build-graph`:
+
+```dotenv
+GRAPH_MIN_TX=3                   # фокус-набор: кошельки с >= N транзакций (или с меткой)
+GRAPH_RISKY_LABELS=mixer,sanctioned,fraud,blacklist  # какие соседи считаются рисковыми
+GRAPH_CENTRALITY_REF=500         # степень узла, дающая полную центральность (=1.0)
+GRAPH_FAN_REF=100                # число связей, дающее полную веерность (=1.0)
+GRAPH_W_RISKY=0.75               # связь с рисковыми узлами — самая важная метрика
+GRAPH_W_CENTRALITY=0.35          # проходность узла
+GRAPH_W_TRANSIT=0.30             # транзитность (deposit-and-forward)
+GRAPH_W_FAN=0.20                 # веерность (массовый сбор/распыление)
+```
+
+Полезные запросы:
+
+```sql
+-- топ по графовому риску с объяснением
+SELECT w.address, w.label, g.graph_score, g.risky_neighbors, g.graph_explanation
+FROM wallet_graph_features g JOIN wallet w ON w.id = g.wallet_id
+ORDER BY g.graph_score DESC LIMIT 10;
+
+-- распределение graph_score
+SELECT count(*), min(graph_score), max(graph_score),
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY graph_score) AS p90
+FROM wallet_graph_features;
 ```

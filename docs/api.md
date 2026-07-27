@@ -132,10 +132,67 @@ GET /api/alerts/13/
     "is_flagged": true,
     "label": null,
     "first_seen_at": "2015-09-28T08:24:43Z",
-    "last_seen_at": "2015-10-04T12:00:00Z"
+    "last_seen_at": "2015-10-04T12:00:00Z",
+
+    "rule_score": 0.0,
+    "ml_score": 65.0,
+    "ml_explanation": "транзитность=0.95 (аномально высокий); ...",
+    "graph_score": 76.04,
+    "graph_explanation": "прямая связь с рисковыми узлами: 1 (миксер/санкции), доля 50%"
   }
 }
 ```
+
+`graph_score` — оценка Graph Analysis (0–100, `null`, если граф ещё не посчитан
+командой `--build-graph`); `graph_explanation` — какие граф-метрики её подняли.
+
+---
+
+## GET /api/wallets/{id}/ — детали кошелька
+
+Кроме полей списка отдаёт признаки поведения (`features` → вход ML), граф-признаки
+(`graph_features` → положение в сети переводов) и последнюю оценку риска:
+
+```json
+{
+  "address": "0x53c9293f03b3709e040f1d4bab7bf3968fc93c24",
+  "risk_score": 20.0,
+  "features": { "tx_total": 10, "unique_counterparties": 4, "transit_ratio": 0.87, "...": "..." },
+  "graph_features": {
+    "in_degree": 0,
+    "out_degree": 1,
+    "degree_centrality": 1.5e-05,
+    "risky_neighbors": 1,
+    "risky_neighbor_ratio": 1.0,
+    "transit_ratio": 0.0,
+    "fan_in_ratio": 0.0,
+    "fan_out_ratio": 0.1,
+    "graph_score": 75.9,
+    "graph_explanation": "прямая связь с рисковыми узлами: 1 (миксер/санкции), доля 100%",
+    "computed_at": "2026-07-26T09:57:07Z"
+  },
+  "latest_risk": {
+    "rule_score": 20.0,
+    "ml_score": 65.0,
+    "graph_score": 75.9,
+    "final_score": 38.0,
+    "risk_level": "MEDIUM",
+    "ml_explanation": "...",
+    "graph_explanation": "прямая связь с рисковыми узлами: 1 (миксер/санкции), доля 100%",
+    "decision": {
+      "level": "MEDIUM",
+      "confidence": 0.6,
+      "reasons": ["Граф: подозрительное положение в сети 76% — ..."],
+      "sources": {
+        "graph": { "score": 75.9, "high": true, "available": true, "explanation": "..." },
+        "independent_high_sources": ["graph"]
+      }
+    }
+  }
+}
+```
+
+`features` и `graph_features` равны `null`, если для кошелька они ещё не посчитаны.
 
 ### Ошибка
 
