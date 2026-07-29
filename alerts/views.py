@@ -17,6 +17,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 
+from .graph_query import DEFAULT_LIMIT, MAX_DEPTH, build_ego_network, resolve_center
 from .models import Alert, Rule, Tx, Wallet
 from .serializers import (
     AlertDetailSerializer, AlertListSerializer, RuleSerializer,
@@ -200,6 +201,58 @@ class RuleViewSet(viewsets.ReadOnlyModelViewSet):
         rule.is_active = body.validated_data["is_active"]
         rule.save(update_fields=["is_active"])
         return Response(RuleSerializer(rule).data)
+
+
+@extend_schema(
+    tags=["graph"],
+    parameters=[
+        OpenApiParameter("address", str, description="Адрес центрального кошелька"),
+        OpenApiParameter("wallet_id", int, description="ID центрального кошелька (альтернатива address)"),
+        OpenApiParameter("depth", int, description=f"Глубина обхода 1..{MAX_DEPTH} (по умолчанию 1)"),
+        OpenApiParameter("limit", int, description=f"Максимум узлов (по умолчанию {DEFAULT_LIMIT}, максимум 200)"),
+    ],
+    responses=OpenApiResponse(
+        description="Эго-сеть кошелька: узлы и рёбра",
+        examples=[OpenApiExample("Пример", value={
+            "center_id": 25867, "depth": 1, "limit": 60,
+            "truncated": False, "total_neighbors": 2, "shown_neighbors": 2,
+            "nodes": [{
+                "id": 25867, "address": "0xeb55…", "label": None, "label_source": None,
+                "risk_level": "MEDIUM", "final_score": 0.0, "graph_score": 76.24,
+                "tx_count": 5, "is_center": True, "depth": 0,
+            }],
+            "edges": [{"source": 25867, "target": 991,
+                       "tx_count": 3, "total_amount": "1500000000000000000"}],
+        })],
+    ),
+)
+@api_view(["GET"])
+def graph_view(request):
+    """Эго-сеть кошелька для страницы «Граф потоков».
+
+    Весь граф не отдаётся: центр + соседи на глубину depth, не более limit узлов.
+    Если соседей больше лимита — возвращаются самые значимые по объёму потока,
+    а в ответе стоит truncated=true с общим числом связей.
+    """
+    center = resolve_center(request.query_params.get("address"),
+                            request.query_params.get("wallet_id"))
+    if center is None:
+        return Response(
+            {"detail": "Кошелёк не найден. Передай address или wallet_id."},
+            status=http_status.HTTP_404_NOT_FOUND,
+        )
+
+    def _int(name, default):
+        try:
+            return int(request.query_params.get(name, default))
+        except (TypeError, ValueError):
+            return default
+
+    center_id, center_address = center
+    data = build_ego_network(center_id, _int("depth", 1), _int("limit", DEFAULT_LIMIT))
+    data["center_id"] = center_id
+    data["center_address"] = center_address
+    return Response(data)
 
 
 @extend_schema(
