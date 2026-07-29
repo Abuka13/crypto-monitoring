@@ -1,7 +1,7 @@
 import { h, css } from '../lib/dom';
 import { icon } from '../lib/icons';
 
-const NAV = ['dashboard','alerts','wallets','transactions','rules'];
+const NAV = ['dashboard','alerts','wallets','transactions','graph','rules'];
 
 export default function Sidebar({ t, screen, expanded, onNav, onLogout }){
   return h('div', {style:css("width:" + (expanded ? '224px' : '66px') + ";flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:14px 0 16px;z-index:5;transition:width .22s cubic-bezier(.4,0,.2,1);overflow:hidden;")},

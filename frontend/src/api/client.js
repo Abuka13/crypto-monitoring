@@ -71,6 +71,9 @@ export const fetchRules = () => getJSON(API + '/rules/');
 // Агрегаты для дашборда считаются на сервере (не требуют загрузки всех алертов).
 export const fetchStats = () => getJSON(API + '/stats/');
 export const fetchMe = () => getJSON(API + '/auth/me/');
+// Эго-сеть кошелька для страницы «Граф потоков»: центр + соседи на глубину depth.
+// Весь граф не запрашивается никогда — сервер режет по limit и ставит truncated.
+export const fetchGraph = (params) => getJSON(API + '/graph/?' + _q(params));
 export const fetchAlertDetail = (id) => getJSON(API + '/alerts/' + id + '/');
 export const setAlertStatus = (id, status) => patchJSON(API + '/alerts/' + id + '/status/', {status});
 export const setRuleActive = (id, isActive) => patchJSON(API + '/rules/' + id + '/', {is_active: isActive});

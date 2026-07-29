@@ -13,9 +13,12 @@ function detailVM(selected, kind, detailData, t){
     const d = detailData;
     const rm = RISK[sel.level] || RISK.low; const sm = STAT[sel.status] || STAT.open;
     const score = sel.final_score;
-    let fired = [], ctxRows = [], mlExplanation = null;
+    let fired = [], ctxRows = [], mlExplanation = null, graphAddr = null;
     const decision = d ? (d.decision || null) : null;
     if(d){
+      const cc = d.context || {};
+      // Для алерта по кошельку центр графа — сам кошелёк, по транзакции — отправитель.
+      graphAddr = d.target_type === 'wallet' ? cc.address : cc.sender_address;
       fired = (d.fired_rules || []).map(f => ({name:f.name, score:f.score}));
       const c = d.context || {};
       if(d.target_type === 'transaction'){
@@ -58,6 +61,7 @@ function detailVM(selected, kind, detailData, t){
       gauge:ringGauge(score, rm.color), score:score, scoreColor:rm.color,
       fired:fired, ctxRows:ctxRows, mlExplanation:mlExplanation, decision:decision,
       actions:actions, hasActions:actions.length > 0,
+      graphAddr:graphAddr,
       loadingCtx:!d,
     };
   }
@@ -76,6 +80,7 @@ function detailVM(selected, kind, detailData, t){
         {k:t.f.sent, v:weiToEth(sel.total_sent, 3) + ' ETH'},
         {k:t.f.flagged, v:sel.is_flagged ? t.yes : t.no},
       ].filter(Boolean), fired:[], actions:[], hasActions:false, loadingCtx:false,
+      graphAddr:sel.address,
     };
   }
   // tx
@@ -94,6 +99,7 @@ function detailVM(selected, kind, detailData, t){
       {k:t.f.block, v:num(x.block_number)},
       {k:t.f.time, v:fmtDate(Date.parse(x.transaction_timestamp))},
     ].filter(Boolean), fired:[], actions:[], hasActions:false, loadingCtx:false,
+    graphAddr:x.sender_address,
   };
 }
 
@@ -129,7 +135,7 @@ function renderDecision(t, dec){
       chip(t.detail.srcGraph, !!graph.high, graph.available ? String(graph.score ?? 0) : t.detail.notImplemented)));
 }
 
-export default function DetailDrawer({ t, selected, kind, detailData, onClose, onSetStatus, copy }){
+export default function DetailDrawer({ t, selected, kind, detailData, onClose, onSetStatus, copy, onShowGraph }){
   if(!selected) return null;
   const d = detailVM(selected, kind, detailData, t);
   if(!d) return null;
@@ -168,6 +174,11 @@ export default function DetailDrawer({ t, selected, kind, detailData, onClose, o
           d.mlExplanation ? h('div', {style:css("margin-bottom:22px;")},
             h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.anomaly),
             h('div', {style:css("font-size:12.5px;line-height:1.55;padding:11px 14px;background:rgba(176,82,255,.10);border:1px solid rgba(176,82,255,.35);border-radius:11px;color:var(--text);")}, d.mlExplanation)) : null),
+
+        // Переход в «Граф потоков» — ключевой шаг сценария расследования.
+        (d.graphAddr && onShowGraph) ? h('button', {onClick:() => onShowGraph(d.graphAddr),
+          style:css("display:flex;align-items:center;justify-content:center;gap:9px;width:100%;padding:12px;margin-bottom:22px;border-radius:11px;border:1px solid var(--accent);background:var(--accent-soft);color:var(--accent);font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;transition:all .18s;")},
+          icon('graph', 17), h('span', null, t.graph.showLinks)) : null,
 
         (d.ctxRows && d.ctxRows.length) ? h('div', {style:css("margin-bottom:22px;")},
           h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.context),

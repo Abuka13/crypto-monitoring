@@ -5,7 +5,7 @@ import { Auth } from './auth/tokens';
 import {
   loginRequest, logoutRequest, fetchMe,
   fetchAlertsPage, fetchWalletsPage, fetchTransactionsPage, fetchRules, fetchStats,
-  fetchAlertDetail, setAlertStatus, setRuleActive,
+  fetchAlertDetail, setAlertStatus, setRuleActive, fetchGraph,
 } from './api/client';
 
 import Sidebar from './components/Sidebar';
@@ -17,6 +17,7 @@ import Dashboard from './pages/Dashboard';
 import Alerts from './pages/Alerts';
 import Wallets from './pages/Wallets';
 import Transactions from './pages/Transactions';
+import GraphFlows from './pages/GraphFlows';
 import Rules from './pages/Rules';
 import { PAGE } from './lib/constants';
 
@@ -34,6 +35,7 @@ export default class App extends React.Component {
       fRisk:'all', fStatus:'all', fType:'all', q:'', alertsView:'table',
       wRisk:'all', wFlag:'all', qWallets:'', qTx:'',
       selected:null, selectedKind:null, detailData:null,
+      graphAddress:'',   // адрес, на который открыт «Граф потоков» (переход из деталей)
       // Списки хранят ТОЛЬКО текущую страницу (не накапливают).
       alerts:[], wallets:[], txs:[], rules:[], stats:null,
       alertsCount:0, walletsCount:0, txsCount:0,
@@ -200,6 +202,24 @@ export default class App extends React.Component {
   copy(text){ try{ navigator.clipboard && navigator.clipboard.writeText(text); }catch(e){} this.showToast(this.T_().copied); }
   setScreen(id){ this.setState({screen:id, selected:null, selectedKind:null, detailData:null}); }
 
+  // Переход «Показать связи» из деталей алерта/кошелька: закрываем drawer и
+  // открываем «Граф потоков» с этим адресом в центре.
+  showGraphFor(address){
+    if(!address) return;
+    this.setState({screen:'graph', graphAddress:address,
+                   selected:null, selectedKind:null, detailData:null});
+  }
+
+  // Из графа — на страницу кошелька: находим кошелёк по адресу и открываем детали.
+  async openWalletByAddress(address){
+    try{
+      const r = await fetchWalletsPage({search:address, limit:1});
+      const w = (r.results || [])[0];
+      if(w) this.setState({screen:'wallets', selected:w, selectedKind:'wallet', detailData:null});
+      else this.showToast(this.T_().graph.notFound);
+    }catch(e){ this.showToast(this.T_().graph.notFound); }
+  }
+
   // ---------- detail ----------
   async openAlert(a){
     this.setState({selected:a, selectedKind:'alert', detailData:null});
@@ -258,6 +278,9 @@ export default class App extends React.Component {
       s.screen === 'alerts' ? h(Alerts, {t, alerts:s.alerts, total:s.alertsCount, page:s.alertsPage, loading:s.listLoading === 'alerts', onPage:p => this.goToPage('alerts', p), fRisk:s.fRisk, fStatus:s.fStatus, fType:s.fType, alertsView:s.alertsView, onFilter:(k, v) => this.setListFilter('alerts', k, v), openAlert:a => this.openAlert(a)}) :
       s.screen === 'wallets' ? h(Wallets, {t, wallets:s.wallets, total:s.walletsCount, page:s.walletsPage, loading:s.listLoading === 'wallets', onPage:p => this.goToPage('wallets', p), wRisk:s.wRisk, wFlag:s.wFlag, onFilter:(k, v) => this.setListFilter('wallets', k, v), openWallet:w => this.openWallet(w), copy:x => this.copy(x)}) :
       s.screen === 'transactions' ? h(Transactions, {t, txs:s.txs, total:s.txsCount, page:s.txsPage, loading:s.listLoading === 'txs', onPage:p => this.goToPage('txs', p), openTx:x => this.openTx(x), copy:x => this.copy(x)}) :
+      s.screen === 'graph' ? h(GraphFlows, {t, initialAddress:s.graphAddress, fetchGraph,
+        copy:x => this.copy(x), onToast:m => this.showToast(m),
+        onOpenWallet:a => this.openWalletByAddress(a)}) :
       h(Rules, {t, rules:s.rules, toggleRule:r => this.toggleRule(r)});
 
     return h('div', {style:css("display:flex;height:100vh;")},
@@ -274,7 +297,7 @@ export default class App extends React.Component {
       h(DetailDrawer, {
         t, selected:s.selected, kind:s.selectedKind, detailData:s.detailData,
         onClose:() => this.closeDetail(), onSetStatus:ns => this.setStatus(ns),
-        copy:x => this.copy(x),
+        copy:x => this.copy(x), onShowGraph:a => this.showGraphFor(a),
       }));
   }
 
