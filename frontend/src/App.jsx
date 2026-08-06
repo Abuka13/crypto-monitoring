@@ -6,6 +6,7 @@ import {
   loginRequest, logoutRequest, fetchMe,
   fetchAlertsPage, fetchWalletsPage, fetchTransactionsPage, fetchRules, fetchStats,
   fetchAlertDetail, setAlertStatus, setRuleActive, fetchGraph,
+  screenAddress, fetchScreenHistory,
 } from './api/client';
 
 import Sidebar from './components/Sidebar';
@@ -17,8 +18,12 @@ import Dashboard from './pages/Dashboard';
 import Alerts from './pages/Alerts';
 import Wallets from './pages/Wallets';
 import Transactions from './pages/Transactions';
-import GraphFlows from './pages/GraphFlows';
+import Screen from './pages/Screen';
 import Rules from './pages/Rules';
+
+// Граф тянет за собой d3 (~200 кБ) — грузим отдельным чанком только при заходе
+// на страницу графа, чтобы остальные экраны открывались быстро.
+const GraphFlows = React.lazy(() => import('./pages/GraphFlows'));
 import { PAGE } from './lib/constants';
 
 // Корневой компонент: владеет состоянием, аутентификацией, загрузкой данных и
@@ -278,9 +283,13 @@ export default class App extends React.Component {
       s.screen === 'alerts' ? h(Alerts, {t, alerts:s.alerts, total:s.alertsCount, page:s.alertsPage, loading:s.listLoading === 'alerts', onPage:p => this.goToPage('alerts', p), fRisk:s.fRisk, fStatus:s.fStatus, fType:s.fType, alertsView:s.alertsView, onFilter:(k, v) => this.setListFilter('alerts', k, v), openAlert:a => this.openAlert(a)}) :
       s.screen === 'wallets' ? h(Wallets, {t, wallets:s.wallets, total:s.walletsCount, page:s.walletsPage, loading:s.listLoading === 'wallets', onPage:p => this.goToPage('wallets', p), wRisk:s.wRisk, wFlag:s.wFlag, onFilter:(k, v) => this.setListFilter('wallets', k, v), openWallet:w => this.openWallet(w), copy:x => this.copy(x)}) :
       s.screen === 'transactions' ? h(Transactions, {t, txs:s.txs, total:s.txsCount, page:s.txsPage, loading:s.listLoading === 'txs', onPage:p => this.goToPage('txs', p), openTx:x => this.openTx(x), copy:x => this.copy(x)}) :
-      s.screen === 'graph' ? h(GraphFlows, {t, initialAddress:s.graphAddress, fetchGraph,
-        copy:x => this.copy(x), onToast:m => this.showToast(m),
+      s.screen === 'screen' ? h(Screen, {t, screenAddress, fetchScreenHistory,
+        onShowGraph:a => this.showGraphFor(a),
         onOpenWallet:a => this.openWalletByAddress(a)}) :
+      s.screen === 'graph' ? h(React.Suspense, {fallback:this.renderInfo(t.loading || 'Загрузка…')},
+        h(GraphFlows, {t, initialAddress:s.graphAddress, fetchGraph,
+          copy:x => this.copy(x), onToast:m => this.showToast(m),
+          onOpenWallet:a => this.openWalletByAddress(a)})) :
       h(Rules, {t, rules:s.rules, toggleRule:r => this.toggleRule(r)});
 
     return h('div', {style:css("display:flex;height:100vh;")},

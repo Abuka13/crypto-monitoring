@@ -74,6 +74,17 @@ export const fetchMe = () => getJSON(API + '/auth/me/');
 // Эго-сеть кошелька для страницы «Граф потоков»: центр + соседи на глубину depth.
 // Весь граф не запрашивается никогда — сервер режет по limit и ставит truncated.
 export const fetchGraph = (params) => getJSON(API + '/graph/?' + _q(params));
+
+// Скрининг адреса по запросу: может идти несколько секунд (сбор из Etherscan).
+export async function screenAddress(address, force){
+  const r = await apiFetch(API + '/screen/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({address, force: !!force}),
+  });
+  const data = await r.json().catch(() => ({}));
+  return {ok:r.ok, status:r.status, data};
+}
+export const fetchScreenHistory = () => getJSON(API + '/screen/history/');
 export const fetchAlertDetail = (id) => getJSON(API + '/alerts/' + id + '/');
 export const setAlertStatus = (id, status) => patchJSON(API + '/alerts/' + id + '/status/', {status});
 export const setRuleActive = (id, isActive) => patchJSON(API + '/rules/' + id + '/', {is_active: isActive});
