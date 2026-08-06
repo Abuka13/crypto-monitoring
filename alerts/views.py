@@ -256,6 +256,93 @@ def graph_view(request):
 
 
 @extend_schema(
+    tags=["screening"],
+    request=None,
+    responses=OpenApiResponse(
+        description="Вердикт по адресу",
+        examples=[OpenApiExample("Пример", value={
+            "address": "0x8589427373d6d84e98730d7795d8f6f8731fdb79",
+            "found": True, "no_activity": False,
+            "label": "mixer", "label_source": "public_known",
+            "risk_level": "MEDIUM", "confidence": 0.6,
+            "reasons": ["Правило: Связь с миксером (+40) [сильное правило]"],
+            "scores": {"rule": 40.0, "ml": 61.0, "graph": 20.5, "final": 48.4},
+            "summary": {"tx_count": 94, "total_received": "1000000000000000000"},
+            "tx_fetched": 94, "truncated": False, "cached": False, "elapsed_ms": 4200,
+        })],
+    ),
+    description=(
+        "Проверка произвольного Ethereum-адреса. Если адреса нет в базе или у него "
+        "мало транзакций — история подтягивается из Etherscan на лету (до SCREEN_MAX_TX), "
+        "затем считаются признаки, ML, граф и вердикт Decision Engine. Результат "
+        "кэшируется на SCREEN_CACHE_MINUTES; force=true игнорирует кэш. "
+        "Тело запроса: {\"address\": \"0x…\", \"force\": false}."
+    ),
+)
+@api_view(["POST"])
+def screen_view(request):
+    """Скрининг адреса по запросу: сбор данных на лету -> оценка -> вердикт."""
+    from collector.config import Config as CollectorConfig
+    from collector.screening import ScreeningError, is_valid_address, screen_address
+
+    address = (request.data.get("address") or "").strip()
+    if not is_valid_address(address):
+        return Response(
+            {"detail": "Неверный формат адреса. Ожидается 0x и 40 hex-символов "
+                       "(например 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045)."},
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        config = CollectorConfig.load()
+    except Exception as exc:
+        return Response({"detail": f"Ошибка конфигурации сборщика: {exc}"},
+                        status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    try:
+        result = screen_address(address, config, force=bool(request.data.get("force")))
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=http_status.HTTP_400_BAD_REQUEST)
+    except ScreeningError as exc:
+        # Лимит/недоступность Etherscan — это не 500, а понятный ответ пользователю.
+        return Response({"detail": str(exc)},
+                        status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+    return Response(result)
+
+
+@extend_schema(
+    tags=["screening"],
+    responses=OpenApiResponse(description="Последние проверенные адреса"),
+)
+@api_view(["GET"])
+def screen_history_view(request):
+    """История последних проверок (для панели «Недавние» на странице скрининга)."""
+    from collector import db as cdb
+    from collector.config import Config as CollectorConfig
+
+    try:
+        config = CollectorConfig.load()
+        conn = cdb.connect(config.database_url)
+    except Exception as exc:
+        return Response({"detail": f"Нет доступа к базе: {exc}"},
+                        status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+    try:
+        rows = cdb.get_recent_screenings(conn, limit=10)
+    finally:
+        conn.close()
+
+    return Response({"results": [
+        {
+            "address": address,
+            "risk_level": (result or {}).get("risk_level", "LOW"),
+            "label": (result or {}).get("label"),
+            "last_screened_at": last_at.isoformat(),
+        }
+        for address, result, last_at in rows
+    ]})
+
+
+@extend_schema(
     tags=["stats"],
     responses=OpenApiResponse(
         description="Сводка для дашборда",

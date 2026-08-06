@@ -138,6 +138,27 @@ def score_wallets(conn, cfg: RiskConfig, model=None, dcfg: DecisionConfig | None
     return stats
 
 
+# ---- Один кошелёк (для скрининга по запросу) ----
+def score_one_wallet(conn, cfg: RiskConfig, wallet_id: int, model=None,
+                     dcfg: DecisionConfig | None = None,
+                     graph_map: dict | None = None) -> RiskStats:
+    """Оценить риск одного кошелька тем же путём, что и пакетный расчёт.
+
+    Важно для скрининга: вердикт обязан совпадать с тем, что система скажет об
+    этом кошельке в обычном режиме, поэтому переиспользуется _score_wallet_rows,
+    а не отдельная копия логики."""
+    dcfg = dcfg or DecisionConfig.load()
+    stats = RiskStats()
+    _, wallet_rules = _load_rules(conn, stats)
+    rows = db.get_wallets_for_scoring_by_ids(conn, [wallet_id])
+    fmap = db.get_wallet_features_map(conn, [wallet_id]) if model else {}
+    gmap = graph_map if graph_map is not None else db.get_wallet_graph_map(conn, [wallet_id])
+    _score_wallet_rows(conn, cfg, dcfg, wallet_rules, rows, stats,
+                       model=model, features_map=fmap, graph_map=gmap)
+    conn.commit()
+    return stats
+
+
 # ---- Общие помощники (полный и инкрементальный расчёт) ----
 def _score_transaction_rows(conn, cfg, dcfg, tx_rules, rows, stats: RiskStats) -> None:
     for (tx_id, amount, sender_label, receiver_label,

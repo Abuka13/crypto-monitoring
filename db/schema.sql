@@ -228,6 +228,26 @@ CREATE INDEX idx_wallet_graph_score ON wallet_graph_features (graph_score DESC);
 
 
 -- ------------------------------------------------------------
+-- 10. AddressScreening — кэш проверки адреса «по запросу»
+--     Скрининг тянет историю из Etherscan на лету, поэтому результат
+--     кэшируется на SCREEN_CACHE_MINUTES: повторная проверка того же
+--     адреса не расходует лимит API. Одна строка на адрес.
+-- ------------------------------------------------------------
+CREATE TABLE address_screening (
+    address          VARCHAR(128) PRIMARY KEY,   -- в нижнем регистре
+    network_id       INTEGER NOT NULL REFERENCES blockchain_network(id),
+    wallet_id        BIGINT REFERENCES wallet(id) ON DELETE SET NULL,
+
+    result           JSONB NOT NULL,             -- готовый ответ скрининга
+    tx_fetched       INTEGER NOT NULL DEFAULT 0, -- сколько транзакций подтянули
+    last_screened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    screen_count     INTEGER NOT NULL DEFAULT 1  -- сколько раз проверяли
+);
+
+CREATE INDEX idx_screening_last ON address_screening (last_screened_at DESC);
+
+
+-- ------------------------------------------------------------
 -- 7. Alert — оповещение для аналитика
 --    Ссылается ЛИБО на transaction_risk, ЛИБО на wallet_risk.
 --    CHECK гарантирует, что заполнен ровно один из двух FK —

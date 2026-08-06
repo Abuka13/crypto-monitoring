@@ -119,6 +119,23 @@ class GraphConfig:
 
 
 @dataclass(frozen=True)
+class ScreeningConfig:
+    """Скрининг адреса по запросу: сбор из Etherscan на лету + кэш результата."""
+
+    max_tx: int          # сколько транзакций тянуть максимум (лимиты и время ответа)
+    cache_minutes: int   # не дёргать Etherscan повторно в течение N минут
+    min_tx_for_fresh: int  # если в базе меньше N транзакций — идём в Etherscan
+
+    @staticmethod
+    def load() -> "ScreeningConfig":
+        return ScreeningConfig(
+            max_tx=int(os.getenv("SCREEN_MAX_TX", "300")),
+            cache_minutes=int(os.getenv("SCREEN_CACHE_MINUTES", "15")),
+            min_tx_for_fresh=int(os.getenv("SCREEN_MIN_TX_FOR_FRESH", "5")),
+        )
+
+
+@dataclass(frozen=True)
 class Config:
     database_url: str
     etherscan_api_key: str
@@ -128,6 +145,7 @@ class Config:
     risk: RiskConfig
     decision: DecisionConfig
     graph: GraphConfig
+    screening: ScreeningConfig
 
     @staticmethod
     def load() -> "Config":
@@ -142,4 +160,5 @@ class Config:
             risk=RiskConfig.load(),
             decision=DecisionConfig.load(),
             graph=GraphConfig.load(),
+            screening=ScreeningConfig.load(),
         )

@@ -494,6 +494,118 @@ def get_wallet_graph_map(conn, wallet_ids: list[int] | None = None) -> dict[int,
         return {r[0]: (float(r[1]), r[2]) for r in cur.fetchall()}
 
 
+# ---- Скрининг адресов по запросу ----
+
+def get_wallet_by_address(conn, network_id: int, address: str) -> tuple | None:
+    """(id, address, first_seen_at, label, label_source, transaction_count) или None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, address, first_seen_at, label, label_source, transaction_count "
+            "FROM wallet WHERE network_id = %s AND address = %s",
+            (network_id, address.lower()),
+        )
+        return cur.fetchone()
+
+
+def get_wallet_summary(conn, wallet_id: int) -> tuple:
+    """Агрегаты кошелька: (tx_count, received, sent, first_seen, last_seen)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT transaction_count, total_received, total_sent, first_seen_at, last_seen_at "
+            "FROM wallet WHERE id = %s",
+            (wallet_id,),
+        )
+        return cur.fetchone()
+
+
+def get_latest_wallet_risk(conn, wallet_id: int) -> tuple | None:
+    """Последняя оценка риска: (rule, ml, graph, final, risk_level, ml_expl, decision)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT rule_score, ml_score, graph_score, final_score,
+                   risk_level, ml_explanation, decision
+            FROM wallet_risk WHERE wallet_id = %s
+            ORDER BY created_at DESC, id DESC LIMIT 1
+            """,
+            (wallet_id,),
+        )
+        return cur.fetchone()
+
+
+def get_screening_cache(conn, address: str, max_age_minutes: int) -> tuple | None:
+    """Свежий кэш скрининга: (result, last_screened_at, tx_fetched) или None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT result, last_screened_at, tx_fetched FROM address_screening
+            WHERE address = %s AND last_screened_at > now() - (%s || ' minutes')::interval
+            """,
+            (address.lower(), str(max_age_minutes)),
+        )
+        return cur.fetchone()
+
+
+def save_screening(conn, *, address: str, network_id: int, wallet_id: int | None,
+                   result: dict, tx_fetched: int) -> None:
+    """Сохранить результат скрининга (идемпотентно, со счётчиком проверок)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO address_screening
+                (address, network_id, wallet_id, result, tx_fetched, last_screened_at)
+            VALUES (%s, %s, %s, %s, %s, now())
+            ON CONFLICT (address) DO UPDATE SET
+                wallet_id = EXCLUDED.wallet_id, result = EXCLUDED.result,
+                tx_fetched = EXCLUDED.tx_fetched, last_screened_at = now(),
+                screen_count = address_screening.screen_count + 1
+            """,
+            (address.lower(), network_id, wallet_id, Json(result), tx_fetched),
+        )
+
+
+def get_recent_screenings(conn, limit: int = 10) -> list[tuple]:
+    """Последние проверенные адреса: (address, result, last_screened_at)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT address, result, last_screened_at FROM address_screening "
+            "ORDER BY last_screened_at DESC LIMIT %s",
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def get_wallet_edges(conn, wallet_id: int) -> list[tuple]:
+    """Рёбра эго-сети кошелька: (sender_id, receiver_id, count, sum_wei)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT sender_wallet_id, receiver_wallet_id, COUNT(*), SUM(amount)
+            FROM tx
+            WHERE sender_wallet_id = %s OR receiver_wallet_id = %s
+            GROUP BY sender_wallet_id, receiver_wallet_id
+            """,
+            (wallet_id, wallet_id),
+        )
+        return cur.fetchall()
+
+
+def get_labels_for(conn, wallet_ids: list[int]) -> dict[int, str | None]:
+    """{wallet_id: label} для набора кошельков."""
+    if not wallet_ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, label FROM wallet WHERE id = ANY(%s)", (list(wallet_ids),))
+        return {r[0]: r[1] for r in cur.fetchall()}
+
+
+def count_wallets(conn) -> int:
+    """Всего кошельков (масштаб графа для нормировки центральности)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM wallet")
+        return cur.fetchone()[0]
+
+
 # ---- Метки адресов ----
 
 def upsert_wallet_label(

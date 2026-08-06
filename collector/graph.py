@@ -168,6 +168,34 @@ def _explain(risky, risky_ratio, in_deg, out_deg, c_centrality, transit,
     return "; ".join(top) if top else "нейтральное положение в сети"
 
 
+def compute_for_wallet(conn, cfg: GraphConfig, wallet_id: int) -> dict | None:
+    """Граф-метрики ОДНОГО кошелька без построения всего графа (для скрининга).
+
+    Все метрики в compute_wallet_graph локальные — считаются по прямым соседям
+    узла, — поэтому достаточно эго-сети: результат идентичен полному пересчёту.
+    Единственное «глобальное» число — размер графа для нормировки центральности,
+    он берётся отдельным COUNT.
+    """
+    edges = db.get_wallet_edges(conn, wallet_id)
+    if not edges:
+        return None
+
+    graph = nx.DiGraph()
+    graph.add_node(wallet_id)
+    neighbours = set()
+    for sender_id, receiver_id, count, total in edges:
+        if sender_id == receiver_id:
+            continue
+        graph.add_edge(sender_id, receiver_id, weight=float(total or 0), count=int(count))
+        neighbours.add(sender_id if sender_id != wallet_id else receiver_id)
+
+    labels = db.get_labels_for(conn, list(neighbours))
+    feats = compute_wallet_graph(graph, labels, wallet_id, cfg, db.count_wallets(conn))
+    db.upsert_wallet_graph_features(conn, wallet_id, feats)
+    conn.commit()
+    return feats
+
+
 def compute_all(conn, cfg: GraphConfig) -> GraphStats:
     """Построить граф и посчитать graph-признаки для фокус-набора кошельков.
 

@@ -5,7 +5,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .views import (
     AlertViewSet, RuleViewSet, TransactionViewSet, WalletViewSet,
-    graph_view, logout_view, me_view, stats_view,
+    graph_view, logout_view, me_view, screen_history_view, screen_view, stats_view,
 )
 
 router = DefaultRouter()
@@ -17,6 +17,8 @@ router.register("rules", RuleViewSet, basename="rule")
 urlpatterns = [
     path("stats/", stats_view, name="stats"),
     path("graph/", graph_view, name="graph"),
+    path("screen/", screen_view, name="screen"),
+    path("screen/history/", screen_history_view, name="screen-history"),
     # Аутентификация (login/refresh открыты, me/logout — по токену)
     path("auth/login/", TokenObtainPairView.as_view(), name="login"),
     path("auth/refresh/", TokenRefreshView.as_view(), name="refresh"),
