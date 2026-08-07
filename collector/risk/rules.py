@@ -27,6 +27,12 @@ LABEL_MIXER = "mixer"
 LABEL_EXCHANGE = "exchange"
 LABEL_SANCTIONED = "sanctioned"
 LABEL_FRAUD = "fraud"
+LABEL_CONTRACT = "contract"
+
+# Метки, для которых «шумовые» правила не применяются: у биржи и смарт-контракта
+# высокая частота и множество мелких операций — это нормальный режим работы, а не
+# признак structuring. Правила по меткам (миксер/санкции) продолжают действовать.
+NOISE_EXEMPT_LABELS = frozenset({LABEL_EXCHANGE, LABEL_CONTRACT})
 
 # risk_level -> alert.level (lower)
 _ALERT_LEVEL = {"LOW": "low", "MEDIUM": "medium", "HIGH": "high", "CRITICAL": "critical"}
@@ -77,8 +83,8 @@ TX_RULES = {
 
 # ---- Условия правил уровня кошелька: (facts, cfg) -> bool ----
 def _wallet_new(w: WalletFacts, cfg: RiskConfig) -> bool:
-    """Недавно создан + крупный оборот. Биржи исключены (это не новые адреса)."""
-    if w.label == LABEL_EXCHANGE:
+    """Недавно создан + крупный оборот. Биржи и контракты исключены."""
+    if w.label in NOISE_EXEMPT_LABELS:
         return False
     if w.first_seen_at is None:
         return False
@@ -89,8 +95,9 @@ def _wallet_new(w: WalletFacts, cfg: RiskConfig) -> bool:
 
 
 def _wallet_high_frequency(w: WalletFacts, cfg: RiskConfig) -> bool:
-    """>= N транзакций в скользящем окне. Биржи исключены (легитимный поток)."""
-    if w.label == LABEL_EXCHANGE:
+    """>= N транзакций в скользящем окне. Биржи и контракты исключены
+    (для них поток такой интенсивности — штатный режим)."""
+    if w.label in NOISE_EXEMPT_LABELS:
         return False
     if len(w.timestamps) < cfg.high_frequency_count:
         return False
@@ -106,8 +113,8 @@ def _wallet_high_frequency(w: WalletFacts, cfg: RiskConfig) -> bool:
 
 
 def _wallet_structuring(w: WalletFacts, cfg: RiskConfig) -> bool:
-    """>= N мелких ненулевых операций (structuring). Биржи исключены."""
-    if w.label == LABEL_EXCHANGE:
+    """>= N мелких ненулевых операций (structuring). Биржи и контракты исключены."""
+    if w.label in NOISE_EXEMPT_LABELS:
         return False
     small = sum(
         1 for a in w.amounts if 0 < a <= cfg.structuring_small_amount_wei

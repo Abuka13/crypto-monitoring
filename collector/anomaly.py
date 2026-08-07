@@ -66,13 +66,42 @@ def _row_to_vector(feats: dict) -> list[float]:
     return vec
 
 
+# Признаки-отношения: печатаются как «во столько-то раз», а не сырым числом.
+RATIO_COLS = {"in_out_count_ratio", "in_out_value_ratio"}
+# Доли 0..1 — в проценты.
+SHARE_COLS = {"counterparty_spread", "small_tx_ratio", "zero_tx_ratio", "transit_ratio"}
+# Ниже этого порога сумма считается незначительной: называть её «выше типичного»
+# бессмысленно, даже если z-score в лог-шкале формально высокий.
+DUST_WEI = 10 ** 17  # 0.1 ETH
+
+
 def _fmt_value(col: str, raw) -> str:
     v = float(raw)
     if col in WEI_COLS:
-        return f"{v / 1e18:.3g} ETH"
+        return f"{v / 1e18:.4g} ETH"
+    if col in RATIO_COLS:
+        return f"×{v:,.2f}" if v < 1000 else f"×{v:,.0f}"
+    if col in SHARE_COLS:
+        return f"{v * 100:.0f}%"
     if v == int(v):
         return str(int(v))
     return f"{v:.3g}"
+
+
+def _is_misleading(col: str, raw, z: float) -> bool:
+    """Признак, который формально отклоняется, но в тексте выглядит абсурдно.
+
+    Из-за лог-шкалы z-score мелкая сумма может дать высокий z: «отправлено
+    0.0798 ETH (аномально высокий)» — формально верно относительно выборки, где
+    большинство не отправляет ничего, но читается как ошибка. Такие признаки в
+    объяснение не выводим, беря следующий по значимости.
+    """
+    v = float(raw)
+    if col in WEI_COLS and z > 0 and v < DUST_WEI:
+        return True          # «крупная» сумма меньше 0.01 ETH
+    if col in SHARE_COLS and z > 0 and v <= 0.0:
+        return True          # «высокая доля», равная нулю
+    return False
 
 
 class AnomalyModel:
@@ -113,14 +142,27 @@ class AnomalyModel:
         return round(ml), self._explain(xs, feats)
 
     def _explain(self, xs, feats: dict) -> str:
-        """Топ-3 признака с наибольшим |z| (сильнее всего отклоняются от нормы)."""
-        order = sorted(range(len(xs)), key=lambda i: abs(xs[i]), reverse=True)[:3]
-        parts = []
+        """Топ-3 признака, сильнее всего отклоняющихся от типичного кошелька.
+
+        Формулировка «выше/ниже типичного», а не «аномально высокий»: z-score
+        считается относительно обучающей выборки, то есть это сравнение с нормой
+        похожих кошельков, а не абсолютная оценка. Заведомо вводящие в
+        заблуждение признаки (см. _is_misleading) пропускаются.
+        """
+        order = sorted(range(len(xs)), key=lambda i: abs(xs[i]), reverse=True)
+        parts, fallback = [], []
         for i in order:
             col = FEATURE_COLUMNS[i]
-            direction = "аномально высокий" if xs[i] > 0 else "аномально низкий"
-            parts.append(f"{LABELS.get(col, col)}={_fmt_value(col, feats[col])} ({direction})")
-        return "; ".join(parts)
+            direction = "выше типичного" if xs[i] > 0 else "ниже типичного"
+            text = f"{LABELS.get(col, col)}={_fmt_value(col, feats[col])} ({direction})"
+            if _is_misleading(col, feats[col], xs[i]):
+                fallback.append(text)
+                continue
+            parts.append(text)
+            if len(parts) == 3:
+                break
+        # Если осмысленных не нашлось — лучше показать что-то, чем пустоту.
+        return "; ".join(parts or fallback[:3])
 
 
 def train(feature_rows: list[dict], contamination: float = 0.06,

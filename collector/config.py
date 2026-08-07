@@ -36,6 +36,9 @@ class RiskConfig:
     # Веса гибридного скоринга: final = weight_rule*rule + weight_ml*ml (сумма = 1).
     weight_rule: float
     weight_ml: float
+    # Метки, исключаемые из ОБУЧАЮЩЕЙ выборки Isolation Forest: модель должна
+    # учить норму пользовательских кошельков, а не контрактов и бирж.
+    ml_exclude_labels: frozenset[str]
 
     @staticmethod
     def load() -> "RiskConfig":
@@ -52,6 +55,7 @@ class RiskConfig:
             structuring_min_count=int(os.getenv("RISK_STRUCTURING_MIN_COUNT", "30")),
             weight_rule=float(os.getenv("RISK_WEIGHT_RULE", "0.6")),
             weight_ml=float(os.getenv("RISK_WEIGHT_ML", "0.4")),
+            ml_exclude_labels=_csv_set("ML_TRAIN_EXCLUDE_LABELS", "contract,exchange"),
         )
 
 
@@ -70,8 +74,8 @@ class DecisionConfig:
     graph_high: float         # «высокий» graph_score (задел)
     strong_rules: frozenset[str]        # правила повышенной значимости
     hard_signal_labels: frozenset[str]  # метки уровня Hard Signal
-    trusted_labels: frozenset[str]      # известные легитимные (биржи): ИИ/граф в
-                                        # одиночку по ним алерт не создают
+    trusted_labels: frozenset[str]      # известные легитимные (биржи, контракты):
+                                        # ИИ/граф в одиночку по ним алерт не создают
 
     @staticmethod
     def load() -> "DecisionConfig":
@@ -84,7 +88,7 @@ class DecisionConfig:
             strong_rules=_csv_set("DECISION_STRONG_RULES", "Связь с миксером"),
             hard_signal_labels=_csv_set(
                 "DECISION_HARD_SIGNAL_LABELS", "sanctioned,blacklist,fraud"),
-            trusted_labels=_csv_set("DECISION_TRUSTED_LABELS", "exchange"),
+            trusted_labels=_csv_set("DECISION_TRUSTED_LABELS", "exchange,contract"),
         )
 
 

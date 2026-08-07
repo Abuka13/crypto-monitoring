@@ -164,6 +164,18 @@ class EtherscanSource(BlockchainSource):
         result = self._request({"module": "proxy", "action": "eth_blockNumber"})
         return int(result, 16)
 
+    def is_contract(self, address: str) -> bool:
+        """Смарт-контракт или обычный кошелёк (EOA).
+
+        У контракта по адресу лежит байткод, у EOA код пустой ("0x") — это
+        определение из самого протокола, а не эвристика.
+        """
+        result = self._request(
+            {"module": "proxy", "action": "eth_getCode",
+             "address": address, "tag": "latest"}
+        )
+        return bool(result) and str(result) not in ("0x", "0x0", "")
+
     def get_transactions_by_block(self, block_number: int) -> Iterator[RawTransaction]:
         result = self._request(
             {

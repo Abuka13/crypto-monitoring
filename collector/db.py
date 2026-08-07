@@ -606,6 +606,43 @@ def count_wallets(conn) -> int:
         return cur.fetchone()[0]
 
 
+# ---- Определение контрактов ----
+
+def get_contract_candidates(conn, min_tx: int = 5, limit: int = 500) -> list[tuple]:
+    """Кандидаты на смарт-контракт: (wallet_id, address), самые заметные сверху.
+
+    Отбор дешёвый и намеренно широкий — окончательное решение принимает
+    eth_getCode. Признаки: адрес ничего не отправляет сам (tx_out = 0), либо
+    заметная доля операций нулевая по сумме (вызовы методов контракта), либо это
+    просто очень активный адрес — именно такие доминируют в топе аномалий, и
+    проверить их стоит независимо от эвристики. Уже помеченные пропускаем.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT w.id, w.address
+            FROM wallet_features f
+            JOIN wallet w ON w.id = f.wallet_id
+            WHERE w.label IS NULL
+              AND f.tx_total >= %s
+              AND (f.tx_out = 0 OR f.zero_tx_ratio >= 0.3 OR f.tx_total >= 100)
+            ORDER BY f.tx_total DESC
+            LIMIT %s
+            """,
+            (min_tx, limit),
+        )
+        return cur.fetchall()
+
+
+def get_wallet_ids_by_labels(conn, labels: list[str]) -> set[int]:
+    """id кошельков с указанными метками (например, для исключения из обучения)."""
+    if not labels:
+        return set()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM wallet WHERE label = ANY(%s)", (list(labels),))
+        return {r[0] for r in cur.fetchall()}
+
+
 # ---- Метки адресов ----
 
 def upsert_wallet_label(

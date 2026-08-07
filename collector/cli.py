@@ -5,7 +5,7 @@ import argparse
 import logging
 import sys
 
-from . import anomaly, db, features, follow, graph, ingest
+from . import anomaly, contracts, db, features, follow, graph, ingest
 from .config import Config, ConfigError
 from .risk import engine as risk_engine
 from .sources.etherscan import EtherscanSource
@@ -53,6 +53,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Применить обученную модель: обновить ml_score и пересчитать риск кошельков",
     )
     group.add_argument(
+        "--detect-contracts", action="store_true",
+        help="Определить смарт-контракты (метка contract) через eth_getCode "
+             "по кандидатам из wallet_features",
+    )
+    group.add_argument(
         "--build-graph", action="store_true",
         help="Построить граф переводов и посчитать граф-признаки кошельков "
              "(in/out-степень, центральность, связь с рисковыми узлами) в wallet_graph_features",
@@ -94,6 +99,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min-tx", type=int, default=features.DEFAULT_MIN_TX,
         help=f"Минимум транзакций для расчёта признаков (по умолчанию {features.DEFAULT_MIN_TX})",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=500,
+        help="Максимум адресов для проверки (для --detect-contracts; по умолчанию 500)",
     )
     parser.add_argument(
         "--contamination", type=float, default=0.06,
@@ -247,6 +256,17 @@ def _run_train_anomaly(conn, config, args) -> int:
 
     fmap = db.get_wallet_features_map(conn)
     items = [(w, f) for w, f in fmap.items() if int(f["tx_total"]) > 0]
+
+    # Контракты и биржи исключаем из ОБУЧЕНИЯ: модель должна выучить норму
+    # пользовательских кошельков. Иначе «нормой» становится инфраструктура,
+    # а реальные транзитные кошельки перестают выделяться.
+    excluded_labels = sorted(config.risk.ml_exclude_labels)
+    excluded_ids = db.get_wallet_ids_by_labels(conn, excluded_labels)
+    before = len(items)
+    items = [(w, f) for w, f in items if w not in excluded_ids]
+    if before != len(items):
+        print(f"Исключено из обучения по меткам {excluded_labels}: {before - len(items)}")
+
     if len(items) < 20:
         print(f"Слишком мало кошельков с признаками ({len(items)}). "
               f"Сначала: python -m collector --compute-features", file=sys.stderr)
@@ -276,16 +296,24 @@ def _run_train_anomaly(conn, config, args) -> int:
         print(f"  ml={int(ml[i]):3}  {addr[:14]}…{tag}")
         print(f"        {expl}")
 
-    print("\nSanity-check — размеченные биржи (не должны быть ложно-аномальными):")
-    shown = 0
-    for w, f in items:
-        addr, label = brief.get(w, ("?", None))
-        if label == "exchange":
-            score, _ = model.score_one(f)
-            print(f"  ml={score:3}  {addr[:14]}… [exchange]")
-            shown += 1
-    if not shown:
-        print("  (нет бирж с признаками)")
+    # Проверяем ИСКЛЮЧЁННЫХ (контракты/биржи) отдельно: в обучении их нет, но
+    # оценку они получают — важно видеть, что она высокая, и что алерт по ним
+    # не создаётся только благодаря доверенным меткам Decision Engine.
+    print(f"\nSanity-check — исключённые из обучения ({', '.join(excluded_labels)}):")
+    ex_items = [(w, f) for w, f in fmap.items() if w in excluded_ids][:400]
+    ex_brief = {r[0]: (r[1], r[3]) for r in db.get_wallets_for_scoring_by_ids(
+        conn, [w for w, _ in ex_items])}
+    by_label: dict[str, list[int]] = {}
+    for w, f in ex_items:
+        addr, label = ex_brief.get(w, ("?", None))
+        score, _ = model.score_one(f)
+        by_label.setdefault(label or "?", []).append(score)
+    for label, scores in sorted(by_label.items()):
+        high = sum(1 for s in scores if s >= 70)
+        print(f"  {label:9}: n={len(scores):3} медиана ml={int(np.median(scores)):3} "
+              f"с ml>=70: {high} (алертов быть не должно — доверенная метка)")
+    if not by_label:
+        print("  (исключённых кошельков с признаками нет)")
     return 0
 
 
@@ -298,6 +326,33 @@ def _run_score_anomaly(conn, config) -> int:
     stats = risk_engine.score_wallets(conn, config.risk, model, dcfg=config.decision)
     print(f"Готово: {stats}")
     _print_alerts_sample(conn)
+    return 0
+
+
+def _run_detect_contracts(conn, config, args) -> int:
+    source = _make_source(config)
+    network_id = db.get_network_id(conn, source.network_name)
+    print(f"Определение смарт-контрактов (кандидатов до {args.limit}, "
+          f"подтверждение через eth_getCode) ...")
+    stats = contracts.detect_contracts(
+        conn, source, network_id, min_tx=args.min_tx, limit=args.limit
+    )
+    print(f"Готово: {stats}")
+
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM wallet WHERE label = 'contract'")
+    print(f"\nВсего помечено контрактов: {cur.fetchone()[0]}")
+    cur.execute(
+        """
+        SELECT w.address, f.tx_total, f.unique_senders
+        FROM wallet w JOIN wallet_features f ON f.wallet_id = w.id
+        WHERE w.label = 'contract' ORDER BY f.tx_total DESC LIMIT 10
+        """
+    )
+    print("Топ-10 контрактов по активности:")
+    for addr, txt, senders in cur.fetchall():
+        print(f"  {addr[:24]}…  tx={txt:<7} отправителей={senders}")
+    print("\nДалее: --train-anomaly (контракты исключаются из обучения) -> --score-anomaly")
     return 0
 
 
@@ -423,6 +478,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_train_anomaly(conn, config, args)
         if args.score_anomaly:
             return _run_score_anomaly(conn, config)
+        if args.detect_contracts:
+            return _run_detect_contracts(conn, config, args)
         if args.build_graph:
             return _run_build_graph(conn, config)
         if args.score_graph:

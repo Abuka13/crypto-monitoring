@@ -17,6 +17,11 @@ log = logging.getLogger(__name__)
 # Кошельки с меньшим числом транзакций пропускаем — признаки шумны.
 DEFAULT_MIN_TX = 5
 
+# Пол знаменателя для отношения сумм (0.001 ETH). Без него при total_sent = 0
+# «отношение» вырождалось в сырое число wei (1.67e18 вместо осмысленного числа
+# раз) и перекашивало и объяснения, и лог-шкалу модели.
+_VALUE_RATIO_FLOOR_WEI = 10 ** 15
+
 
 @dataclass
 class FeatureStats:
@@ -97,7 +102,9 @@ def compute_features(rows: list[tuple], wallet_id: int, cfg: RiskConfig) -> dict
         "avg_amount": avg_amount,
         "max_amount": max_amount,
         "in_out_count_ratio": tx_in / max(tx_out, 1),
-        "in_out_value_ratio": total_received / max(total_sent, 1),
+        # Знаменатель ограничен снизу 0.001 ETH — иначе при нулевых отправлениях
+        # получалось не отношение, а сумма в wei.
+        "in_out_value_ratio": total_received / max(total_sent, _VALUE_RATIO_FLOOR_WEI),
         "unique_counterparties": len(counterparties),
         "unique_senders": len(senders),
         "unique_receivers": len(receivers),
