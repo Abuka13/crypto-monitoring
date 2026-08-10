@@ -609,6 +609,52 @@ def count_wallets(conn) -> int:
         return cur.fetchone()[0]
 
 
+# ---- Кэш LLM-объяснений ----
+
+def get_alert_explanation(conn, alert_id: int, lang: str, decision_hash: str) -> tuple | None:
+    """Актуальное объяснение: (text, model, generated_at) или None.
+
+    Ключ включает decision_hash — если решение по алерту изменилось, старое
+    объяснение не подходит и будет сгенерировано заново.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT text, model, generated_at FROM alert_explanation "
+            "WHERE alert_id = %s AND lang = %s AND decision_hash = %s",
+            (alert_id, lang, decision_hash),
+        )
+        return cur.fetchone()
+
+
+def save_alert_explanation(conn, *, alert_id: int, lang: str, decision_hash: str,
+                           text: str, model: str) -> None:
+    """Сохранить объяснение (идемпотентно по связке алерт+язык+версия решения)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO alert_explanation (alert_id, lang, decision_hash, text, model)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (alert_id, lang, decision_hash) DO UPDATE
+                SET text = EXCLUDED.text, model = EXCLUDED.model, generated_at = now()
+            """,
+            (alert_id, lang, decision_hash, text, model),
+        )
+    conn.commit()
+
+
+def delete_alert_explanations(conn, alert_id: int, lang: str | None = None) -> int:
+    """Удалить кэш объяснений алерта (для принудительной перегенерации)."""
+    with conn.cursor() as cur:
+        if lang:
+            cur.execute("DELETE FROM alert_explanation WHERE alert_id=%s AND lang=%s",
+                        (alert_id, lang))
+        else:
+            cur.execute("DELETE FROM alert_explanation WHERE alert_id=%s", (alert_id,))
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
 # ---- Определение контрактов ----
 
 def get_contract_candidates(conn, min_tx: int = 5, limit: int = 500) -> list[tuple]:

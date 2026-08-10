@@ -323,6 +323,29 @@ CREATE TABLE alert_evidence (
 CREATE INDEX idx_alert_evidence_tx ON alert_evidence (transaction_id);
 
 
+-- ------------------------------------------------------------
+-- 12. AlertExplanation — кэш LLM-объяснений алерта
+--     Языковая модель НЕ участвует в принятии решения: она только
+--     переформулирует готовое решение Decision Engine человеческим
+--     языком. decision_hash — отпечаток решения; если решение
+--     изменилось, объяснение считается устаревшим и генерируется заново.
+-- ------------------------------------------------------------
+CREATE TABLE alert_explanation (
+    id            BIGSERIAL PRIMARY KEY,
+    alert_id      BIGINT NOT NULL REFERENCES alert(id) ON DELETE CASCADE,
+    lang          VARCHAR(5)  NOT NULL,          -- ru / kk / en
+    decision_hash VARCHAR(64) NOT NULL,          -- sha256 решения на момент генерации
+
+    text          TEXT        NOT NULL,
+    model         VARCHAR(60) NOT NULL,
+    generated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_alert_explanation UNIQUE (alert_id, lang, decision_hash)
+);
+
+CREATE INDEX idx_alert_explanation_alert ON alert_explanation (alert_id);
+
+
 -- ============================================================
 --  Стартовые данные
 -- ============================================================

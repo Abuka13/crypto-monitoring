@@ -6,7 +6,7 @@ import {
   loginRequest, logoutRequest, fetchMe,
   fetchAlertsPage, fetchWalletsPage, fetchTransactionsPage, fetchRules, fetchStats,
   fetchAlertDetail, setAlertStatus, setRuleActive, fetchGraph,
-  screenAddress, fetchScreenHistory,
+  screenAddress, fetchScreenHistory, explainAlert,
 } from './api/client';
 
 import Sidebar from './components/Sidebar';
@@ -307,6 +307,7 @@ export default class App extends React.Component {
         t, selected:s.selected, kind:s.selectedKind, detailData:s.detailData,
         onClose:() => this.closeDetail(), onSetStatus:ns => this.setStatus(ns),
         copy:x => this.copy(x), onShowGraph:a => this.showGraphFor(a),
+        explainAlert, lang:s.lang,
       }));
   }
 

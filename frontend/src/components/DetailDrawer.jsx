@@ -4,6 +4,7 @@ import { icon } from '../lib/icons';
 import { ringGauge } from '../lib/charts';
 import { RISK, STAT, TYPE, TXSTAT } from '../lib/meta';
 import { weiToEth, shorten, fmtDate, num, riskBucket } from '../lib/format';
+import ExplainBlock from './ExplainBlock';
 
 // Сборка модели детали (алерт / кошелёк / транзакция) — как в исходном detailVM.
 function detailVM(selected, kind, detailData, t){
@@ -177,7 +178,7 @@ function renderDecision(t, dec){
       chip(t.detail.srcGraph, !!graph.high, graph.available ? String(graph.score ?? 0) : t.detail.notImplemented)));
 }
 
-export default function DetailDrawer({ t, selected, kind, detailData, onClose, onSetStatus, copy, onShowGraph }){
+export default function DetailDrawer({ t, selected, kind, detailData, onClose, onSetStatus, copy, onShowGraph, explainAlert, lang }){
   if(!selected) return null;
   const d = detailVM(selected, kind, detailData, t);
   if(!d) return null;
@@ -216,6 +217,11 @@ export default function DetailDrawer({ t, selected, kind, detailData, onClose, o
           d.mlExplanation ? h('div', {style:css("margin-bottom:22px;")},
             h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.anomaly),
             h('div', {style:css("font-size:12.5px;line-height:1.55;padding:11px 14px;background:rgba(176,82,255,.10);border:1px solid rgba(176,82,255,.35);border-radius:11px;color:var(--text);")}, d.mlExplanation)) : null),
+
+        // Объяснение LLM — только для алертов (у них есть решение Decision Engine).
+        (kind === 'alert' && explainAlert) ? h(ExplainBlock, {
+          t, lang, alertId:selected.id, explainAlert,
+        }) : null,
 
         (d.evidence && d.evidence.count) ? renderEvidence(t, d.evidence, copy) : null,
 

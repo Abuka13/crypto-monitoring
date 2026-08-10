@@ -22,7 +22,7 @@ from .models import Alert, Rule, Tx, Wallet
 from .serializers import (
     AlertDetailSerializer, AlertListSerializer, RuleSerializer,
     RuleToggleSerializer, StatusUpdateSerializer, TransactionSerializer,
-    WalletDetailSerializer, WalletSerializer,
+    WalletDetailSerializer, WalletSerializer, _related_risk,
 )
 from .transitions import RESOLVING_STATUSES, validate_transition
 
@@ -284,6 +284,143 @@ def graph_view(request):
     data["center_id"] = center_id
     data["center_address"] = center_address
     return Response(data)
+
+
+def _explain_context(alert: Alert) -> dict:
+    """Факты для LLM — снимок готового решения, без права его менять."""
+    risk = _related_risk(alert)
+    decision = getattr(risk, "decision", None) or {}
+    sources = decision.get("sources", {}) or {}
+    wallet = alert.wallet
+
+    ctx = {
+        "risk_level": decision.get("level") or alert.level.upper(),
+        "confidence": decision.get("confidence"),
+        "reasons": decision.get("reasons", []),
+        "scores": {
+            "rule": float(risk.rule_score) if risk else None,
+            "ml": float(getattr(risk, "ml_score", 0) or 0) if risk else None,
+            "graph": (float(risk.graph_score)
+                      if risk and getattr(risk, "graph_score", None) is not None else None),
+        },
+        "fired_rules": (sources.get("rule", {}) or {}).get("fired", []),
+        "ml_explanation": getattr(risk, "ml_explanation", None),
+        "graph_explanation": (sources.get("graph", {}) or {}).get("explanation"),
+        "hard_signals": (sources.get("hard_signal", {}) or {}).get("items", []),
+        "trusted_entity": sources.get("trusted_entity"),
+        "labels": {},
+        "wallet": {},
+        "evidence": {
+            "count": alert.evidence_count,
+            "first_event_at": str(alert.first_event_at) if alert.first_event_at else None,
+            "last_event_at": str(alert.last_event_at) if alert.last_event_at else None,
+            "total_amount_eth": round(float(alert.total_amount) / 1e18, 4),
+        },
+    }
+    if wallet:
+        ctx["labels"] = {"label": wallet.label, "label_source": wallet.label_source}
+        ctx["wallet"] = {
+            "address": wallet.address,
+            "transaction_count": wallet.transaction_count,
+            "total_received_eth": round(float(wallet.total_received) / 1e18, 4),
+            "total_sent_eth": round(float(wallet.total_sent) / 1e18, 4),
+            "first_seen_at": str(wallet.first_seen_at) if wallet.first_seen_at else None,
+            "last_seen_at": str(wallet.last_seen_at) if wallet.last_seen_at else None,
+        }
+    return ctx
+
+
+@extend_schema(
+    tags=["alerts"],
+    request=None,
+    responses=OpenApiResponse(
+        description="Объяснение решения человеческим языком",
+        examples=[OpenApiExample("Пример", value={
+            "text": "РЕЗЮМЕ\n…", "lang": "ru", "cached": False,
+            "model": "claude-opus-5", "generated_at": "2026-08-10T12:00:00Z",
+            "risk_level": "CRITICAL", "disclaimer": "llm_generated",
+        })],
+    ),
+    description=(
+        "Объяснение алерта языковой моделью. LLM НЕ участвует в принятии решения "
+        "и не влияет на уровень риска — она переформулирует готовое решение "
+        "Decision Engine. Результат кэшируется по связке (алерт, язык, версия "
+        "решения); при изменении решения генерируется заново. "
+        "Тело: {\"lang\": \"ru|kk|en\", \"force\": false}."
+    ),
+)
+@api_view(["POST"])
+def explain_alert_view(request, pk: int):
+    """Объяснить решение по алерту человеческим языком (LLM)."""
+    from collector import db as cdb
+    from collector.config import Config as CollectorConfig
+    from collector.llm import (
+        LLMError, LLMNotConfigured, decision_fingerprint, generate_explanation,
+    )
+
+    alert = (
+        Alert.objects.select_related(
+            "transaction_risk", "wallet_risk", "wallet"
+        ).filter(pk=pk).first()
+    )
+    if alert is None:
+        return Response({"detail": "Алерт не найден."},
+                        status=http_status.HTTP_404_NOT_FOUND)
+
+    lang = (request.data.get("lang") or "ru").lower()
+    if lang not in ("ru", "kk", "en"):
+        lang = "ru"
+    force = bool(request.data.get("force"))
+
+    try:
+        config = CollectorConfig.load()
+    except Exception as exc:
+        return Response({"detail": f"Ошибка конфигурации: {exc}"},
+                        status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    if not config.llm.enabled:
+        return Response(
+            {"detail": "LLM не настроена: не задан ANTHROPIC_API_KEY. "
+                       "Функция объяснений опциональна — остальная система работает "
+                       "как обычно.", "configured": False},
+            status=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    context = _explain_context(alert)
+    fingerprint = decision_fingerprint(context)
+
+    conn = cdb.connect(config.database_url)
+    try:
+        if not force:
+            cached = cdb.get_alert_explanation(conn, alert.id, lang, fingerprint)
+            if cached is not None:
+                text, model, generated_at = cached
+                return Response({
+                    "text": text, "lang": lang, "cached": True, "model": model,
+                    "generated_at": generated_at.isoformat(),
+                    "risk_level": context["risk_level"], "disclaimer": "llm_generated",
+                })
+
+        try:
+            text, model = generate_explanation(context, lang, config.llm)
+        except LLMNotConfigured as exc:
+            return Response({"detail": str(exc), "configured": False},
+                            status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+        except LLMError as exc:
+            return Response({"detail": str(exc)},
+                            status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        cdb.save_alert_explanation(conn, alert_id=alert.id, lang=lang,
+                                   decision_hash=fingerprint, text=text, model=model)
+    finally:
+        conn.close()
+
+    return Response({
+        "text": text, "lang": lang, "cached": False, "model": model,
+        "generated_at": timezone.now().isoformat(),
+        # Уровень риска возвращается как есть — LLM его не меняла и не могла.
+        "risk_level": context["risk_level"], "disclaimer": "llm_generated",
+    })
 
 
 @extend_schema(

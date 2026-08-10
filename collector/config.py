@@ -140,6 +140,37 @@ class ScreeningConfig:
 
 
 @dataclass(frozen=True)
+class LLMConfig:
+    """Объяснение алертов языковой моделью. Функция строго опциональна:
+    без ключа система работает как раньше, эндпоинт отвечает «LLM не настроена».
+
+    ВАЖНО: LLM не участвует в принятии решения и не влияет на уровень риска —
+    она только переформулирует готовое решение Decision Engine человеческим
+    языком. Ключ и выбор модели — из .env, никогда не в коде.
+    """
+
+    api_key: str | None
+    model: str
+    max_tokens: int
+    timeout_seconds: float
+    effort: str          # low/medium/high — глубина рассуждений модели
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+    @staticmethod
+    def load() -> "LLMConfig":
+        return LLMConfig(
+            api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+            model=os.getenv("LLM_MODEL", "claude-opus-5"),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000")),
+            timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "45")),
+            effort=os.getenv("LLM_EFFORT", "low"),
+        )
+
+
+@dataclass(frozen=True)
 class Config:
     database_url: str
     etherscan_api_key: str
@@ -150,6 +181,7 @@ class Config:
     decision: DecisionConfig
     graph: GraphConfig
     screening: ScreeningConfig
+    llm: LLMConfig
 
     @staticmethod
     def load() -> "Config":
@@ -165,4 +197,5 @@ class Config:
             decision=DecisionConfig.load(),
             graph=GraphConfig.load(),
             screening=ScreeningConfig.load(),
+            llm=LLMConfig.load(),
         )

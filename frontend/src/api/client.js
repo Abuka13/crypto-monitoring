@@ -85,6 +85,17 @@ export async function screenAddress(address, force){
   return {ok:r.ok, status:r.status, data};
 }
 export const fetchScreenHistory = () => getJSON(API + '/screen/history/');
+
+// Объяснение алерта языковой моделью. Может идти несколько секунд; при повторном
+// запросе отдаётся из кэша. На уровень риска НЕ влияет — только текст.
+export async function explainAlert(id, lang, force){
+  const r = await apiFetch(API + '/alerts/' + id + '/explain/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({lang, force: !!force}),
+  });
+  const data = await r.json().catch(() => ({}));
+  return {ok:r.ok, status:r.status, data};
+}
 export const fetchAlertDetail = (id) => getJSON(API + '/alerts/' + id + '/');
 export const setAlertStatus = (id, status) => patchJSON(API + '/alerts/' + id + '/status/', {status});
 export const setRuleActive = (id, isActive) => patchJSON(API + '/rules/' + id + '/', {is_active: isActive});
