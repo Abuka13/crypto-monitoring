@@ -45,26 +45,107 @@ class RiskStats:
         )
 
 
-def _emit_or_refresh_alert(conn, *, target_type, object_id, risk_id, title, description, level) -> str:
-    """Дедуп по объекту: обновить активный алерт или создать новый. -> 'created'|'updated'."""
-    if target_type == "wallet":
-        active = db.find_active_alert_for_wallet(conn, object_id)
-    else:
-        active = db.find_active_alert_for_transaction(conn, object_id)
+def reason_key(sources: dict, dcfg=None) -> str:
+    """Ключ причины — ТОЖДЕСТВО находки: hard:<метка> | rule:<имя>.
 
-    if active is not None:
-        db.refresh_alert(
-            conn, alert_id=active, target_type=target_type, risk_id=risk_id,
+    Принимает `decision.sources` (или тот же словарь из сохранённого JSONB), чтобы
+    движок и миграция старых алертов считали ключ одинаково.
+
+    Берётся не весь набор сработавшего, а ГЛАВНАЯ причина по приоритету
+    Hard Signal -> сильное правило -> обычные правила. Иначе находка дробится на
+    ровном месте: 279 переводов с санкционным адресом и ещё 19 таких же, но
+    крупных, дали бы два разных алерта, хотя это одно и то же открытие.
+
+    ML и граф в ключ не входят: это подтверждающие сигналы, они колеблются от
+    прогона к прогону и плодили бы новые алерты. Санкции и дробление дают разные
+    ключи — значит, остаются разными алертами, как и требуется.
+    """
+    sources = sources or {}
+    hard = sorted({it["label"]
+                   for it in (sources.get("hard_signal") or {}).get("items", [])})
+    if hard:
+        return "|".join(f"hard:{h}" for h in hard)
+
+    fired = sorted({r["name"] for r in (sources.get("rule") or {}).get("fired", [])})
+    strong = sorted(set(fired) & set(dcfg.strong_rules)) if dcfg else []
+    names = strong or fired
+    return "|".join(f"rule:{n}" for n in names) or "ml_graph_only"
+
+
+_CAUSE_TEXT = {
+    "sanctioned": "связь с санкционным адресом",
+    "blacklist": "адрес в чёрном списке",
+    "fraud": "связь с мошенническим адресом",
+    "mixer": "связь с миксером",
+}
+
+
+def _cause_phrase(reason: str) -> str:
+    """Причина человеческим языком для заголовка (по ключу, а не по тексту решения)."""
+    parts = []
+    for token in reason.split("|"):
+        kind, _, value = token.partition(":")
+        if kind == "hard":
+            parts.append(_CAUSE_TEXT.get(value, f"метка «{value}»"))
+        elif kind == "rule":
+            parts.append(_CAUSE_TEXT.get(value.lower(), value.lower()))
+    return ", ".join(parts) or "аномальное поведение"
+
+
+def _fmt_period(first_at, last_at) -> str:
+    if not first_at or not last_at:
+        return ""
+    fmt = "%d.%m.%Y"
+    a, b = first_at.strftime(fmt), last_at.strftime(fmt)
+    return a if a == b else f"{a}–{b}"
+
+
+def _entity_title(address: str, reason: str, summary=None) -> str:
+    """«Кошелёк 0xABC… — связь с санкционным адресом: 300 транзакций, 01.01–02.02»."""
+    head = f"Кошелёк {address[:10]}… — {_cause_phrase(reason)}"
+    if not summary or not summary[0]:
+        return head[:200]
+    count, first_at, last_at, _total = summary
+    period = _fmt_period(first_at, last_at)
+    tail = f": {count} транзакц." + (f", {period}" if period else "")
+    return (head + tail)[:200]
+
+
+def _emit_entity_alert(conn, *, wallet_id, address, reason, target_type, risk_id,
+                       description, level, evidence_tx_id=None,
+                       evidence_wallet_id=None) -> str:
+    """Алерт на связку (кошелёк, причина). Повторное событие с той же причиной не
+    плодит сигнал, а добавляется в доказательства. -> 'created'|'updated'."""
+    active = db.find_active_entity_alert(conn, wallet_id, reason)
+    title = _entity_title(address, reason)
+
+    if active is None:
+        alert_id = db.insert_entity_alert(
+            conn, wallet_id=wallet_id, reason_key=reason, target_type=target_type,
+            title=title, description=description, level=level,
+            transaction_risk_id=risk_id if target_type == "transaction" else None,
+            wallet_risk_id=risk_id if target_type == "wallet" else None,
+        )
+        outcome = "created"
+    else:
+        alert_id = active[0]
+        db.refresh_entity_alert(
+            conn, alert_id=alert_id, target_type=target_type, risk_id=risk_id,
             title=title, description=description, level=level,
         )
-        return "updated"
+        outcome = "updated"
 
-    db.insert_alert(
-        conn, target_type=target_type, title=title, description=description, level=level,
-        transaction_risk_id=risk_id if target_type == "transaction" else None,
-        wallet_risk_id=risk_id if target_type == "wallet" else None,
-    )
-    return "created"
+    # Заголовок с числом доказательств можно проставить только ПОСЛЕ пересчёта.
+    if evidence_tx_id is not None:
+        db.add_alert_evidence(conn, alert_id, evidence_tx_id)
+    elif evidence_wallet_id is not None:
+        db.add_wallet_evidence(conn, alert_id, evidence_wallet_id)
+    else:
+        return outcome
+
+    summary = db.recalc_alert_evidence(conn, alert_id)
+    db.set_alert_title(conn, alert_id, _entity_title(address, reason, summary))
+    return outcome
 
 
 def _load_rules(conn, stats: RiskStats):
@@ -160,9 +241,32 @@ def score_one_wallet(conn, cfg: RiskConfig, wallet_id: int, model=None,
 
 
 # ---- Общие помощники (полный и инкрементальный расчёт) ----
+def _subject_wallet(sender_id, receiver_id, sender_label, receiver_label, dcfg):
+    """Сущность, «о которой» находка: участник с триггерящей меткой, иначе отправитель.
+
+    Для транзакции с санкционным получателем находка — про санкционный адрес, а не
+    про конкретный перевод; так все переводы с ним схлопываются в один алерт.
+    """
+    flagged = dcfg.hard_signal_labels | {"mixer"}
+    if receiver_label in flagged:
+        return receiver_id
+    if sender_label in flagged:
+        return sender_id
+    return sender_id
+
+
 def _score_transaction_rows(conn, cfg, dcfg, tx_rules, rows, stats: RiskStats) -> None:
+    # Адреса нужны только для заголовков алертов — кешируем, чтобы не делать
+    # запрос на каждую из десятков тысяч транзакций.
+    _addr: dict[int, str] = {}
+
+    def addr_cache(conn, wallet_id: int) -> str:
+        if wallet_id not in _addr:
+            _addr.update(db.get_wallet_addresses(conn, [wallet_id]))
+        return _addr.get(wallet_id, "")
+
     for (tx_id, amount, sender_label, receiver_label,
-         sender_src, receiver_src) in rows:
+         sender_src, receiver_src, sender_id, receiver_id) in rows:
         facts = TxFacts(
             tx_id=tx_id,
             amount_wei=int(amount),
@@ -201,11 +305,15 @@ def _score_transaction_rows(conn, cfg, dcfg, tx_rules, rows, stats: RiskStats) -
         stats.tx_risk_rows += 1
 
         if risk_level != "LOW":
-            outcome = _emit_or_refresh_alert(
-                conn, target_type="transaction", object_id=tx_id, risk_id=risk_id,
-                title=f"Рискованная транзакция: {risk_level} (уверенность {decision.confidence:.0%})",
+            subject = _subject_wallet(sender_id, receiver_id,
+                                      sender_label, receiver_label, dcfg)
+            outcome = _emit_entity_alert(
+                conn, wallet_id=subject, address=addr_cache(conn, subject),
+                reason=reason_key(decision.sources, dcfg),
+                target_type="transaction", risk_id=risk_id,
                 description=" | ".join(decision.reasons),
                 level=rules.alert_level_from_risk_level(risk_level),
+                evidence_tx_id=tx_id,
             )
             if outcome == "created":
                 stats.tx_alerts += 1
@@ -292,12 +400,13 @@ def _score_wallet_rows(conn, cfg, dcfg, wallet_rules, wallets, stats: RiskStats,
             stats.wallets_flagged += 1
 
         if risk_level != "LOW":
-            outcome = _emit_or_refresh_alert(
-                conn, target_type="wallet", object_id=wallet_id, risk_id=risk_id,
-                title=f"Рискованный кошелёк {address[:12]}…: {risk_level} "
-                      f"(уверенность {decision.confidence:.0%})",
+            outcome = _emit_entity_alert(
+                conn, wallet_id=wallet_id, address=address,
+                reason=reason_key(decision.sources, dcfg),
+                target_type="wallet", risk_id=risk_id,
                 description=" | ".join(decision.reasons),
                 level=rules.alert_level_from_risk_level(risk_level),
+                evidence_wallet_id=wallet_id,
             )
             if outcome == "created":
                 stats.wallet_alerts += 1

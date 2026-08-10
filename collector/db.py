@@ -166,12 +166,14 @@ def get_active_rules(conn) -> list[Rule]:
 
 
 def get_transactions_for_scoring(conn) -> list[tuple]:
-    """Все tx: (id, amount, sender_label, receiver_label, sender_src, receiver_src)."""
+    """Все tx: (id, amount, sender_label, receiver_label, sender_src, receiver_src,
+    sender_wallet_id, receiver_wallet_id)."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT t.id, t.amount, sw.label, rw.label,
-                   sw.label_source, rw.label_source
+                   sw.label_source, rw.label_source,
+                   t.sender_wallet_id, t.receiver_wallet_id
             FROM tx t
             JOIN wallet sw ON sw.id = t.sender_wallet_id
             JOIN wallet rw ON rw.id = t.receiver_wallet_id
@@ -198,7 +200,8 @@ def get_transactions_for_scoring_by_block(conn, network_id: int, block_number: i
         cur.execute(
             """
             SELECT t.id, t.amount, sw.label, rw.label,
-                   sw.label_source, rw.label_source
+                   sw.label_source, rw.label_source,
+                   t.sender_wallet_id, t.receiver_wallet_id
             FROM tx t
             JOIN wallet sw ON sw.id = t.sender_wallet_id
             JOIN wallet rw ON rw.id = t.receiver_wallet_id
@@ -679,6 +682,160 @@ def upsert_wallet_label(
             (label, source, row[0]),
         )
         return "updated"
+
+
+# ---- Алерты на сущность + причину (с доказательной базой) ----
+
+def find_active_entity_alert(conn, wallet_id: int, reason_key: str) -> tuple | None:
+    """Активный алерт по связке (кошелёк, причина): (id, level, evidence_count)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, level, evidence_count FROM alert
+            WHERE wallet_id = %s AND reason_key = %s
+              AND status IN ('open', 'in_progress')
+            ORDER BY id DESC LIMIT 1
+            """,
+            (wallet_id, reason_key),
+        )
+        return cur.fetchone()
+
+
+def insert_entity_alert(
+    conn, *, wallet_id: int, reason_key: str, target_type: str,
+    title: str, description: str, level: str,
+    transaction_risk_id: int | None = None, wallet_risk_id: int | None = None,
+) -> int:
+    """Создать алерт на сущность. Доказательства добавляются отдельно."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO alert
+                (transaction_risk_id, wallet_risk_id, target_type, wallet_id,
+                 reason_key, title, description, level, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'open')
+            RETURNING id
+            """,
+            (transaction_risk_id, wallet_risk_id, target_type, wallet_id,
+             reason_key, title, description, level),
+        )
+        return cur.fetchone()[0]
+
+
+def add_alert_evidence(conn, alert_id: int, transaction_id: int) -> bool:
+    """Привязать транзакцию к алерту. False, если она уже была доказательством."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO alert_evidence (alert_id, transaction_id) VALUES (%s, %s) "
+            "ON CONFLICT DO NOTHING RETURNING transaction_id",
+            (alert_id, transaction_id),
+        )
+        return cur.fetchone() is not None
+
+
+def refresh_entity_alert(
+    conn, *, alert_id: int, target_type: str, risk_id: int,
+    title: str, description: str, level: str,
+) -> None:
+    """Обновить алерт свежей оценкой. Уровень только ПОВЫШАЕТСЯ (не занижаем
+    находку из-за более слабого повторного события); статус не трогаем."""
+    order = "CASE level WHEN 'low' THEN 0 WHEN 'medium' THEN 1 " \
+            "WHEN 'high' THEN 2 WHEN 'critical' THEN 3 ELSE 0 END"
+    risk_cols = ("transaction_risk_id=%s, wallet_risk_id=NULL" if target_type == "transaction"
+                 else "wallet_risk_id=%s, transaction_risk_id=NULL")
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE alert SET
+                {risk_cols},
+                title = %s,
+                description = %s,
+                level = CASE WHEN ({order}) < (CASE %s WHEN 'low' THEN 0 WHEN 'medium' THEN 1
+                                                       WHEN 'high' THEN 2 WHEN 'critical' THEN 3
+                                                       ELSE 0 END)
+                             THEN %s ELSE level END
+            WHERE id = %s
+            """,
+            (risk_id, title, description, level, level, alert_id),
+        )
+
+
+def recalc_alert_evidence(conn, alert_id: int) -> tuple:
+    """Пересчитать сводку доказательств. -> (count, first_at, last_at, total_wei)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE alert a SET
+                evidence_count = s.cnt,
+                first_event_at = s.first_at,
+                last_event_at  = s.last_at,
+                total_amount   = s.total
+            FROM (
+                SELECT count(*) AS cnt,
+                       min(t.transaction_timestamp) AS first_at,
+                       max(t.transaction_timestamp) AS last_at,
+                       COALESCE(sum(t.amount), 0)   AS total
+                FROM alert_evidence e JOIN tx t ON t.id = e.transaction_id
+                WHERE e.alert_id = %s
+            ) s
+            WHERE a.id = %s
+            RETURNING a.evidence_count, a.first_event_at, a.last_event_at, a.total_amount
+            """,
+            (alert_id, alert_id),
+        )
+        return cur.fetchone()
+
+
+def add_wallet_evidence(conn, alert_id: int, wallet_id: int, limit: int = 200) -> int:
+    """Доказательства для алерта уровня КОШЕЛЬКА.
+
+    Правила кошелька (частота, дробление, новый адрес) смотрят на всю историю
+    операций, поэтому доказательство — сами транзакции этого кошелька. Берём
+    последние `limit`, чтобы не раздувать таблицу на кошельках-гигантах.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO alert_evidence (alert_id, transaction_id)
+            SELECT %s, t.id FROM tx t
+            WHERE t.sender_wallet_id = %s OR t.receiver_wallet_id = %s
+            ORDER BY t.transaction_timestamp DESC
+            LIMIT %s
+            ON CONFLICT DO NOTHING
+            """,
+            (alert_id, wallet_id, wallet_id, limit),
+        )
+        return cur.rowcount
+
+
+def set_alert_title(conn, alert_id: int, title: str) -> None:
+    """Обновить заголовок (после пересчёта доказательств — в нём число транзакций)."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE alert SET title = %s WHERE id = %s", (title, alert_id))
+
+
+def get_wallet_addresses(conn, wallet_ids: list[int]) -> dict[int, str]:
+    """{wallet_id: address} — для заголовков алертов."""
+    if not wallet_ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, address FROM wallet WHERE id = ANY(%s)", (list(wallet_ids),))
+        return dict(cur.fetchall())
+
+
+def get_alert_evidence(conn, alert_id: int, limit: int = 20) -> list[tuple]:
+    """Последние транзакции-доказательства: (tx_hash, amount, timestamp)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT t.tx_hash, t.amount, t.transaction_timestamp
+            FROM alert_evidence e JOIN tx t ON t.id = e.transaction_id
+            WHERE e.alert_id = %s
+            ORDER BY t.transaction_timestamp DESC LIMIT %s
+            """,
+            (alert_id, limit),
+        )
+        return cur.fetchall()
 
 
 # ---- Дедуп алертов: один активный (open/in_progress) на объект ----

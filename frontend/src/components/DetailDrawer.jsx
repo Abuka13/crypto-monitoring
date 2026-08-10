@@ -15,6 +15,7 @@ function detailVM(selected, kind, detailData, t){
     const score = sel.final_score;
     let fired = [], ctxRows = [], mlExplanation = null, graphAddr = null;
     const decision = d ? (d.decision || null) : null;
+    const evidence = d ? (d.evidence || null) : null;
     if(d){
       const cc = d.context || {};
       // Для алерта по кошельку центр графа — сам кошелёк, по транзакции — отправитель.
@@ -60,6 +61,7 @@ function detailVM(selected, kind, detailData, t){
       statusLabel:t.status[sel.status] || sel.status, statusStyle:'background:' + sm.bg + ';color:' + sm.color + ';',
       gauge:ringGauge(score, rm.color), score:score, scoreColor:rm.color,
       fired:fired, ctxRows:ctxRows, mlExplanation:mlExplanation, decision:decision,
+      evidence:evidence,
       actions:actions, hasActions:actions.length > 0,
       graphAddr:graphAddr,
       loadingCtx:!d,
@@ -101,6 +103,46 @@ function detailVM(selected, kind, detailData, t){
     ].filter(Boolean), fired:[], actions:[], hasActions:false, loadingCtx:false,
     graphAddr:x.sender_address,
   };
+}
+
+// Доказательная база: сводка находки + последние транзакции.
+// Алерт заводится на сущность, а транзакции хранятся как подтверждение — поэтому
+// одна находка занимает одну строку в списке, а не сотни.
+function renderEvidence(t, ev, copy){
+  const e = t.evidence;
+  const stat = (k, v) => h('div', {style:css("flex:1;min-width:92px;")},
+    h('div', {style:css("font-size:10.5px;color:var(--muted);margin-bottom:3px;")}, k),
+    h('div', {style:css("font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;")}, v));
+
+  const period = (ev.first_event_at && ev.last_event_at)
+    ? fmtDate(Date.parse(ev.first_event_at)) + ' — ' + fmtDate(Date.parse(ev.last_event_at))
+    : '—';
+
+  return h('div', {style:css("margin-bottom:22px;")},
+    h('div', {style:css("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;")},
+      h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;")}, e.title),
+      h('div', {style:css("font-size:11.5px;color:var(--muted);")}, num(ev.count) + ' ' + e.txs)),
+
+    h('div', {style:css("display:flex;gap:12px;flex-wrap:wrap;padding:13px 15px;background:var(--card2);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;")},
+      stat(e.count, num(ev.count)),
+      stat(e.volume, weiToEth(ev.total_amount, 3) + ' ETH')),
+    h('div', {style:css("font-size:11.5px;color:var(--muted);margin-bottom:10px;padding-left:2px;")},
+      e.period + ': ' + period),
+
+    h('div', {style:css("display:flex;flex-direction:column;gap:5px;")},
+      (ev.transactions || []).map((x, i) => h('div', {key:i,
+        style:css("display:flex;align-items:center;gap:9px;padding:9px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;")},
+        h('span', {style:css("flex:1;min-width:0;font-size:11.5px;font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")},
+          shorten(x.tx_hash, 10, 6)),
+        h('span', {style:css("font-size:11.5px;font-family:'JetBrains Mono',monospace;font-weight:700;flex-shrink:0;")},
+          weiToEth(x.amount, 3)),
+        h('span', {style:css("font-size:10.5px;color:var(--muted);flex-shrink:0;")},
+          fmtDate(Date.parse(x.transaction_timestamp))),
+        h('button', {onClick:() => copy && copy(x.tx_hash), title:x.tx_hash,
+          style:css("border:none;background:transparent;color:var(--muted);cursor:pointer;display:flex;padding:2px;flex-shrink:0;")}, icon('copy', 13))))),
+
+    ev.has_more ? h('div', {style:css("font-size:11.5px;color:var(--muted);margin-top:9px;text-align:center;")},
+      e.more.replace('{shown}', num(ev.shown)).replace('{total}', num(ev.count))) : null);
 }
 
 // Блок Decision Engine: причины решения + вклад каждого независимого источника.
@@ -174,6 +216,8 @@ export default function DetailDrawer({ t, selected, kind, detailData, onClose, o
           d.mlExplanation ? h('div', {style:css("margin-bottom:22px;")},
             h('div', {style:css("font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;")}, t.detail.anomaly),
             h('div', {style:css("font-size:12.5px;line-height:1.55;padding:11px 14px;background:rgba(176,82,255,.10);border:1px solid rgba(176,82,255,.35);border-radius:11px;color:var(--text);")}, d.mlExplanation)) : null),
+
+        (d.evidence && d.evidence.count) ? renderEvidence(t, d.evidence, copy) : null,
 
         // Переход в «Граф потоков» — ключевой шаг сценария расследования.
         (d.graphAddr && onShowGraph) ? h('button', {onClick:() => onShowGraph(d.graphAddr),

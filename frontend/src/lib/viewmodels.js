@@ -15,6 +15,8 @@ export function alertVM(a, ctx){
     statusLabel:t.status[a.status] || a.status, statusStyle:'background:' + sm.bg + ';color:' + sm.color + ';',
     score:a.final_score, scoreColor:rm.color, dateStr:fmtDate(a._ts),
     isHigh:(a.level === 'high' && a.status === 'open'),
+    // Число транзакций-доказательств: одна находка = один алерт, а не сотни.
+    evidenceCount:a.evidence_count || 0,
     onOpen:() => ctx.openAlert(a),
   };
 }

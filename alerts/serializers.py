@@ -15,6 +15,10 @@ from .transitions import VALID_STATUSES
 _REASON_PREFIX = "Сработавшие правила:"
 _RULE_RE = re.compile(r"\s*(.+?)\s*\(\+([\d.]+)\)\s*(?:;|$)")
 
+# Сколько транзакций-доказательств отдаём сразу в деталях алерта; остальные —
+# постранично через /api/alerts/{id}/evidence/.
+EVIDENCE_PREVIEW = 20
+
 
 def _wei(value: Decimal | None) -> str | None:
     """wei -> строка (без потери точности). None остаётся None."""
@@ -49,16 +53,17 @@ def _graph_explanation(wallet: Wallet) -> str | None:
 
 
 class AlertListSerializer(serializers.ModelSerializer):
-    """Элемент списка GET /api/alerts/."""
+    """Элемент списка GET /api/alerts/ (с числом транзакций-доказательств)."""
 
     final_score = serializers.SerializerMethodField()
+    address = serializers.CharField(source="wallet.address", read_only=True, allow_null=True)
 
     class Meta:
         model = Alert
         fields = [
             "id", "target_type", "level", "status",
             "title", "description", "created_at", "resolved_at",
-            "final_score",
+            "final_score", "evidence_count", "address",
         ]
 
     def get_final_score(self, obj: Alert) -> float | None:
@@ -74,6 +79,8 @@ class AlertDetailSerializer(serializers.ModelSerializer):
     fired_rules = serializers.SerializerMethodField()
     context = serializers.SerializerMethodField()
     decision = serializers.SerializerMethodField()
+    evidence = serializers.SerializerMethodField()
+    address = serializers.CharField(source="wallet.address", read_only=True, allow_null=True)
 
     class Meta:
         model = Alert
@@ -81,7 +88,37 @@ class AlertDetailSerializer(serializers.ModelSerializer):
             "id", "target_type", "level", "status",
             "title", "description", "created_at", "resolved_at",
             "final_score", "risk_level", "fired_rules", "context", "decision",
+            "evidence", "evidence_count", "address", "reason_key",
         ]
+
+    def get_evidence(self, obj: Alert) -> dict:
+        """Доказательная база: сводка + последние N транзакций."""
+        limit = EVIDENCE_PREVIEW
+        rows = (
+            Tx.objects.filter(evidence_for__alert_id=obj.id)
+            .select_related("sender_wallet", "receiver_wallet")
+            .order_by("-transaction_timestamp", "-id")[:limit]
+        )
+        return {
+            "count": obj.evidence_count,
+            "first_event_at": obj.first_event_at,
+            "last_event_at": obj.last_event_at,
+            "total_amount": _wei(obj.total_amount),   # wei строкой
+            "shown": len(rows),
+            "has_more": obj.evidence_count > len(rows),
+            "transactions": [
+                {
+                    "id": t.id,
+                    "tx_hash": t.tx_hash,
+                    "amount": _wei(t.amount),
+                    "sender_address": t.sender_wallet.address,
+                    "receiver_address": t.receiver_wallet.address,
+                    "block_number": t.block_number,
+                    "transaction_timestamp": t.transaction_timestamp,
+                }
+                for t in rows
+            ],
+        }
 
     def get_decision(self, obj: Alert) -> dict | None:
         """Решение Decision Engine: уровень, уверенность, причины, вклад источников."""

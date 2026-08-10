@@ -37,6 +37,7 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
             "transaction_risk__transaction__receiver_wallet",
             "wallet_risk__wallet",
             "wallet_risk__wallet__graph_features",  # объяснение графового риска
+            "wallet",                                # сущность алерта
         )
         .all()
         .order_by("-created_at")
@@ -52,6 +53,36 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == "retrieve":
             return AlertDetailSerializer
         return AlertListSerializer
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("limit", int, description="Сколько транзакций вернуть (по умолчанию 50)"),
+            OpenApiParameter("offset", int, description="Смещение для постраничного просмотра"),
+        ],
+        responses=OpenApiResponse(description="Транзакции-доказательства алерта"),
+        description="Полный список транзакций-доказательств алерта, постранично.",
+    )
+    @action(detail=True, methods=["get"], url_path="evidence")
+    def evidence(self, request, pk=None):
+        """Доказательства алерта: все связанные транзакции (limit/offset)."""
+        alert = self.get_object()
+
+        def _int(name, default, cap):
+            try:
+                return max(0, min(int(request.query_params.get(name, default)), cap))
+            except (TypeError, ValueError):
+                return default
+
+        limit, offset = _int("limit", 50, 200), _int("offset", 0, 10 ** 9)
+        qs = (
+            Tx.objects.filter(evidence_for__alert_id=alert.id)
+            .select_related("sender_wallet", "receiver_wallet")
+            .order_by("-transaction_timestamp", "-id")
+        )
+        return Response({
+            "count": alert.evidence_count,
+            "results": TransactionSerializer(qs[offset:offset + limit], many=True).data,
+        })
 
     @extend_schema(
         request=StatusUpdateSerializer,

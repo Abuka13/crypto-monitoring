@@ -256,9 +256,22 @@ CREATE INDEX idx_screening_last ON address_screening (last_screened_at DESC);
 CREATE TABLE alert (
     id                  BIGSERIAL PRIMARY KEY,
 
+    -- Указатель на ПОСЛЕДНЮЮ сработавшую оценку (провенанс). Вся доказательная
+    -- база — в alert_evidence.
     transaction_risk_id BIGINT REFERENCES transaction_risk(id) ON DELETE CASCADE,
     wallet_risk_id      BIGINT REFERENCES wallet_risk(id)      ON DELETE CASCADE,
     target_type         VARCHAR(15) NOT NULL,                  -- 'transaction' / 'wallet'
+
+    -- Сущность и причина: алерт заводится на (кошелёк, набор причин), а не на
+    -- каждую транзакцию, иначе одна находка порождает сотни сигналов.
+    wallet_id           BIGINT REFERENCES wallet(id) ON DELETE CASCADE,
+    reason_key          TEXT,                                  -- hard:<метка>|rule:<имя>
+
+    -- Сводка доказательств (денормализована ради списка без JOIN)
+    evidence_count      INTEGER      NOT NULL DEFAULT 0,
+    first_event_at      TIMESTAMPTZ,
+    last_event_at       TIMESTAMPTZ,
+    total_amount        NUMERIC(40, 0) NOT NULL DEFAULT 0,     -- суммарный объём, wei
 
     title               VARCHAR(200) NOT NULL,
     description         TEXT,
@@ -283,6 +296,31 @@ CREATE TABLE alert (
 -- Главная выборка аналитика: открытые алерты, свежие сверху
 CREATE INDEX idx_alert_status ON alert (status, created_at DESC);
 CREATE INDEX idx_alert_level  ON alert (level);
+CREATE INDEX idx_alert_wallet ON alert (wallet_id);
+
+-- Один активный алерт на (кошелёк, причина). Частичный индекс: закрытый алерт
+-- не мешает завести новый, если событие повторится позже.
+CREATE UNIQUE INDEX uq_alert_active_entity_reason
+    ON alert (wallet_id, reason_key)
+    WHERE status IN ('open', 'in_progress');
+
+
+-- ------------------------------------------------------------
+-- 11. AlertEvidence — транзакции, подтверждающие алерт
+--     Реальные AML-платформы алертят на сущность, а транзакции
+--     хранят как доказательства. Отдельная таблица (а не массив):
+--     связь многие-ко-многим по смыслу, нужна пагинация и честная
+--     ссылочная целостность.
+-- ------------------------------------------------------------
+CREATE TABLE alert_evidence (
+    id             BIGSERIAL PRIMARY KEY,        -- суррогатный ключ (Django не умеет составные PK)
+    alert_id       BIGINT NOT NULL REFERENCES alert(id) ON DELETE CASCADE,
+    transaction_id BIGINT NOT NULL REFERENCES tx(id)    ON DELETE CASCADE,
+    added_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_alert_evidence UNIQUE (alert_id, transaction_id)
+);
+
+CREATE INDEX idx_alert_evidence_tx ON alert_evidence (transaction_id);
 
 
 -- ============================================================

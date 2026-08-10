@@ -117,6 +117,49 @@ GET /api/alerts/13/
 }
 ```
 
+### Доказательная база
+
+Алерт заводится на **сущность + причину**, а транзакции хранятся как
+доказательства, поэтому одна находка — одна строка в списке, а не сотни.
+
+В списке (`GET /api/alerts/`) у каждого элемента есть `evidence_count` и `address`.
+В деталях — блок `evidence`:
+
+```json
+{
+  "evidence": {
+    "count": 300,
+    "first_event_at": "2022-03-29T17:47:58Z",
+    "last_event_at": "2026-07-27T10:14:47Z",
+    "total_amount": "176016070000000000000000",
+    "shown": 20,
+    "has_more": true,
+    "transactions": [
+      {"id": 91234, "tx_hash": "0x1b25e6…", "amount": "0",
+       "sender_address": "0x…", "receiver_address": "0x…",
+       "block_number": 25623480, "transaction_timestamp": "2026-07-27T10:14:47Z"}
+    ]
+  },
+  "reason_key": "hard:sanctioned",
+  "address": "0x098b716b8aaf21512996dc57eb0615e2383e2f96"
+}
+```
+
+`total_amount` и `amount` — **в wei строками**. Отдаются последние 20 транзакций;
+остальные — через отдельный эндпоинт.
+
+---
+
+## GET /api/alerts/{id}/evidence/ — все доказательства алерта
+
+Постранично, `limit` (по умолчанию 50, максимум 200) и `offset`.
+
+```json
+{ "count": 300, "results": [ { "tx_hash": "0x…", "amount": "…" } ] }
+```
+
+---
+
 ### Алерт по кошельку (`target_type = "wallet"`)
 
 `context` для кошелька выглядит так:

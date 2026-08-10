@@ -180,6 +180,17 @@ class Alert(models.Model):
         db_column="wallet_risk_id", null=True, blank=True,
     )
     target_type = models.CharField(max_length=15)   # 'transaction' / 'wallet'
+    # Сущность + причина: алерт заводится на кошелёк, а не на каждую транзакцию.
+    wallet = models.ForeignKey(
+        Wallet, models.DO_NOTHING, db_column="wallet_id", null=True, blank=True,
+        related_name="alerts",
+    )
+    reason_key = models.TextField(null=True, blank=True)
+    # Сводка доказательной базы
+    evidence_count = models.IntegerField(default=0)
+    first_event_at = models.DateTimeField(null=True, blank=True)
+    last_event_at = models.DateTimeField(null=True, blank=True)
+    total_amount = models.DecimalField(max_digits=40, decimal_places=0, default=0)  # wei
     title = models.CharField(max_length=200)
     description = models.TextField(null=True, blank=True)
     level = models.CharField(max_length=10)         # 'low' / 'medium' / 'high'
@@ -190,3 +201,19 @@ class Alert(models.Model):
     class Meta:
         managed = False
         db_table = "alert"
+
+
+class AlertEvidence(models.Model):
+    """Транзакция-доказательство алерта. Уникальна пара (alert, transaction)."""
+    id = models.BigAutoField(primary_key=True)
+    alert = models.ForeignKey(
+        Alert, models.DO_NOTHING, db_column="alert_id", related_name="evidence",
+    )
+    transaction = models.ForeignKey(
+        Tx, models.DO_NOTHING, db_column="transaction_id", related_name="evidence_for",
+    )
+    added_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "alert_evidence"
