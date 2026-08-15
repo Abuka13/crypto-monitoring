@@ -12,13 +12,17 @@
 фактической базой и переформулирует его в связный текст для аналитика. Если
 выключить эту функцию, не изменится ни одна оценка риска — только исчезнет текст.
 
-Ключ и модель берутся из .env (LLMConfig), никогда не хардкодятся.
+Провайдер выбирается в .env (LLM_PROVIDER): anthropic / gemini / ollama.
+Меняется ТОЛЬКО клиент — промпт, ограничения роли, кэш и обработка ошибок общие
+для всех провайдеров. Ключи и адреса берутся из .env, никогда не хардкодятся.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
+
+import requests
 
 from .config import LLMConfig
 
@@ -103,14 +107,16 @@ def build_user_prompt(context: dict, lang: str) -> str:
     )
 
 
-def generate_explanation(context: dict, lang: str, cfg: LLMConfig) -> tuple[str, str]:
-    """Сгенерировать объяснение. -> (текст, имя модели). Бросает LLMError."""
-    if not cfg.enabled:
-        raise LLMNotConfigured(
-            "LLM не настроена: не задан ANTHROPIC_API_KEY. "
-            "Функция объяснений опциональна — остальная система работает как обычно."
-        )
+# ---------------------------------------------------------------------------
+# Клиенты провайдеров.
+#
+# Каждый получает готовые SYSTEM_PROMPT и user-промпт и возвращает
+# (текст, имя модели). Ниже этой границы ничего не знает о том, ЧТО за факты
+# передаются и какие у модели ограничения — это общая часть выше.
+# ---------------------------------------------------------------------------
 
+def _call_anthropic(system: str, user: str, cfg: LLMConfig) -> tuple[str, str]:
+    """Anthropic Claude через официальный SDK."""
     try:
         import anthropic
     except ImportError as exc:
@@ -123,20 +129,16 @@ def generate_explanation(context: dict, lang: str, cfg: LLMConfig) -> tuple[str,
         response = client.messages.create(
             model=cfg.model,
             max_tokens=cfg.max_tokens,
-            system=SYSTEM_PROMPT,
+            system=system,
             output_config={"effort": cfg.effort},
-            messages=[{"role": "user", "content": build_user_prompt(context, lang)}],
+            messages=[{"role": "user", "content": user}],
         )
     except anthropic.APITimeoutError as exc:
-        raise LLMError(
-            f"Модель не ответила за {cfg.timeout_seconds:.0f} с. Попробуй ещё раз."
-        ) from exc
+        raise LLMError(_timeout_msg(cfg)) from exc
     except anthropic.RateLimitError as exc:
-        raise LLMError(
-            "Превышен лимит запросов к LLM. Подожди немного и повтори."
-        ) from exc
+        raise LLMError("Превышен лимит запросов к LLM. Подожди немного и повтори.") from exc
     except anthropic.AuthenticationError as exc:
-        raise LLMError("Ключ LLM недействителен — проверь ANTHROPIC_API_KEY в .env.") from exc
+        raise LLMError(f"Ключ LLM недействителен — проверь {cfg.credential_env} в .env.") from exc
     except anthropic.APIConnectionError as exc:
         raise LLMError(f"Нет связи с сервисом LLM: {exc}") from exc
     except anthropic.APIStatusError as exc:
@@ -147,6 +149,122 @@ def generate_explanation(context: dict, lang: str, cfg: LLMConfig) -> tuple[str,
         raise LLMError("Модель отказалась формировать объяснение по этому запросу.")
 
     text = "\n".join(b.text for b in response.content if b.type == "text").strip()
+    return text, response.model
+
+
+def _call_gemini(system: str, user: str, cfg: LLMConfig) -> tuple[str, str]:
+    """Google Gemini (AI Studio) через REST — без дополнительного SDK.
+
+    Системная инструкция передаётся отдельным полем system_instruction, а не
+    подмешивается в текст пользователя: так ограничения роли остаются
+    инструкцией, а факты — данными.
+    """
+    url = f"{cfg.base_url.rstrip('/')}/models/{cfg.model}:generateContent"
+    payload = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {"maxOutputTokens": cfg.max_tokens},
+    }
+    data = _post_json(url, payload, cfg, headers={"x-goog-api-key": cfg.api_key})
+
+    # Запрос мог быть заблокирован фильтрами — это ответ, а не сбой сервера.
+    blocked = (data.get("promptFeedback") or {}).get("blockReason")
+    if blocked:
+        raise LLMError(f"Gemini отклонил запрос (причина: {blocked}).")
+
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise LLMError("Gemini не вернул ответ.")
+    reason = candidates[0].get("finishReason")
+    if reason == "SAFETY":
+        raise LLMError("Gemini отказался формировать объяснение по этому запросу.")
+
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts).strip()
+    return text, cfg.model
+
+
+def _call_ollama(system: str, user: str, cfg: LLMConfig) -> tuple[str, str]:
+    """Локальная модель через OpenAI-совместимый эндпоинт Ollama."""
+    url = cfg.base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": cfg.model,
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+        "max_tokens": cfg.max_tokens,
+        "stream": False,
+    }
+    data = _post_json(url, payload, cfg)
+
+    choices = data.get("choices") or []
+    if not choices:
+        raise LLMError("Локальная модель не вернула ответ.")
+    text = ((choices[0].get("message") or {}).get("content") or "").strip()
+    return text, data.get("model") or cfg.model
+
+
+def _timeout_msg(cfg: LLMConfig) -> str:
+    return f"Модель не ответила за {cfg.timeout_seconds:.0f} с. Попробуй ещё раз."
+
+
+def _post_json(url: str, payload: dict, cfg: LLMConfig, headers: dict | None = None) -> dict:
+    """POST с общей для REST-провайдеров обработкой ошибок -> понятный LLMError."""
+    try:
+        resp = requests.post(url, json=payload, timeout=cfg.timeout_seconds,
+                             headers={"Content-Type": "application/json", **(headers or {})})
+    except requests.Timeout as exc:
+        raise LLMError(_timeout_msg(cfg)) from exc
+    except requests.ConnectionError as exc:
+        where = cfg.base_url or "сервису LLM"
+        hint = (" Проверь, что Ollama запущена (ollama serve) и модель загружена "
+                f"(ollama pull {cfg.model}).") if cfg.provider == "ollama" else ""
+        raise LLMError(f"Нет связи с {where}.{hint}") from exc
+    except requests.RequestException as exc:
+        raise LLMError(f"Ошибка обращения к LLM: {exc}") from exc
+
+    if resp.status_code in (401, 403):
+        raise LLMError(f"Ключ LLM недействителен — проверь {cfg.credential_env} в .env.")
+    if resp.status_code == 429:
+        raise LLMError("Превышен лимит запросов к LLM. Подожди немного и повтори.")
+    if resp.status_code == 404:
+        raise LLMError(f"Модель «{cfg.model}» недоступна у провайдера "
+                       f"{cfg.provider} — проверь LLM_MODEL.")
+    if resp.status_code >= 400:
+        raise LLMError(f"Сервис LLM вернул ошибку {resp.status_code}.")
+
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise LLMError("Сервис LLM вернул неразборчивый ответ.") from exc
+
+
+_PROVIDERS = {
+    "anthropic": _call_anthropic,
+    "gemini": _call_gemini,
+    "ollama": _call_ollama,
+}
+
+
+def generate_explanation(context: dict, lang: str, cfg: LLMConfig) -> tuple[str, str]:
+    """Сгенерировать объяснение. -> (текст, имя модели). Бросает LLMError.
+
+    Промпт, ограничения роли и обработка ошибок общие; различается только клиент.
+    """
+    if not cfg.enabled:
+        raise LLMNotConfigured(
+            f"LLM не настроена: для провайдера «{cfg.provider}» не задан "
+            f"{cfg.credential_env}. Функция объяснений опциональна — "
+            f"остальная система работает как обычно."
+        )
+
+    call = _PROVIDERS.get(cfg.provider)
+    if call is None:
+        raise LLMNotConfigured(
+            f"Неизвестный LLM_PROVIDER «{cfg.provider}». "
+            f"Доступны: {', '.join(sorted(_PROVIDERS))}."
+        )
+
+    text, model = call(SYSTEM_PROMPT, build_user_prompt(context, lang), cfg)
     if not text:
         raise LLMError("Модель вернула пустой ответ.")
-    return text, response.model
+    return text, model

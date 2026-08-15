@@ -380,9 +380,10 @@ def explain_alert_view(request, pk: int):
 
     if not config.llm.enabled:
         return Response(
-            {"detail": "LLM не настроена: не задан ANTHROPIC_API_KEY. "
-                       "Функция объяснений опциональна — остальная система работает "
-                       "как обычно.", "configured": False},
+            {"detail": f"LLM не настроена: для провайдера «{config.llm.provider}» "
+                       f"не задан {config.llm.credential_env}. Функция объяснений "
+                       f"опциональна — остальная система работает как обычно.",
+             "configured": False, "provider": config.llm.provider},
             status=http_status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
@@ -397,6 +398,7 @@ def explain_alert_view(request, pk: int):
                 text, model, generated_at = cached
                 return Response({
                     "text": text, "lang": lang, "cached": True, "model": model,
+                    "provider": config.llm.provider,
                     "generated_at": generated_at.isoformat(),
                     "risk_level": context["risk_level"], "disclaimer": "llm_generated",
                 })
@@ -417,6 +419,7 @@ def explain_alert_view(request, pk: int):
 
     return Response({
         "text": text, "lang": lang, "cached": False, "model": model,
+        "provider": config.llm.provider,
         "generated_at": timezone.now().isoformat(),
         # Уровень риска возвращается как есть — LLM его не меняла и не могла.
         "risk_level": context["risk_level"], "disclaimer": "llm_generated",

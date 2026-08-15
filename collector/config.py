@@ -139,31 +139,66 @@ class ScreeningConfig:
         )
 
 
+# Модель по умолчанию для каждого провайдера (переопределяется LLM_MODEL).
+LLM_DEFAULT_MODELS = {
+    "anthropic": "claude-opus-5",
+    "gemini": "gemini-2.5-flash",   # бесплатный тариф AI Studio
+    "ollama": "llama3.1",           # локальная модель
+}
+# Переменная с ключом/адресом для каждого провайдера — для понятных сообщений.
+LLM_CREDENTIAL_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "ollama": "OLLAMA_BASE_URL",
+}
+
+
 @dataclass(frozen=True)
 class LLMConfig:
     """Объяснение алертов языковой моделью. Функция строго опциональна:
-    без ключа система работает как раньше, эндпоинт отвечает «LLM не настроена».
+    без настроенного провайдера система работает как раньше, а эндпоинт отвечает
+    «LLM не настроена».
 
     ВАЖНО: LLM не участвует в принятии решения и не влияет на уровень риска —
     она только переформулирует готовое решение Decision Engine человеческим
-    языком. Ключ и выбор модели — из .env, никогда не в коде.
+    языком. Провайдер, модель и ключ/адрес — из .env, никогда не в коде.
     """
 
-    api_key: str | None
+    provider: str            # anthropic | gemini | ollama
     model: str
+    api_key: str | None      # ключ выбранного провайдера (Ollama не требует)
+    base_url: str | None     # базовый адрес REST-провайдера (Gemini / Ollama)
     max_tokens: int
     timeout_seconds: float
-    effort: str          # low/medium/high — глубина рассуждений модели
+    effort: str              # глубина рассуждений; учитывается только Anthropic
 
     @property
     def enabled(self) -> bool:
-        return bool(self.api_key)
+        """Ollama работает без ключа — ему достаточно адреса."""
+        return bool(self.base_url) if self.provider == "ollama" else bool(self.api_key)
+
+    @property
+    def credential_env(self) -> str:
+        return LLM_CREDENTIAL_ENV.get(self.provider, "ANTHROPIC_API_KEY")
 
     @staticmethod
     def load() -> "LLMConfig":
+        provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+        if provider not in LLM_DEFAULT_MODELS:
+            provider = "anthropic"
+        key_env = LLM_CREDENTIAL_ENV[provider]
+        # Базовый адрес REST-провайдеров: можно переопределить под прокси или
+        # собственный шлюз, не трогая код.
+        base_url = {
+            "gemini": os.getenv("GEMINI_BASE_URL",
+                                "https://generativelanguage.googleapis.com/v1beta"),
+            "ollama": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+        }.get(provider)
         return LLMConfig(
-            api_key=os.getenv("ANTHROPIC_API_KEY") or None,
-            model=os.getenv("LLM_MODEL", "claude-opus-5"),
+            provider=provider,
+            model=os.getenv("LLM_MODEL") or LLM_DEFAULT_MODELS[provider],
+            api_key=(os.getenv(key_env) or None) if provider != "ollama" else None,
+            base_url=base_url,
             max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000")),
             timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "45")),
             effort=os.getenv("LLM_EFFORT", "low"),
