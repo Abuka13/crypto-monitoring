@@ -567,17 +567,6 @@ def save_screening(conn, *, address: str, network_id: int, wallet_id: int | None
         )
 
 
-def get_recent_screenings(conn, limit: int = 10) -> list[tuple]:
-    """Последние проверенные адреса: (address, result, last_screened_at)."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT address, result, last_screened_at FROM address_screening "
-            "ORDER BY last_screened_at DESC LIMIT %s",
-            (limit,),
-        )
-        return cur.fetchall()
-
-
 def get_wallet_edges(conn, wallet_id: int) -> list[tuple]:
     """Рёбра эго-сети кошелька: (sender_id, receiver_id, count, sum_wei)."""
     with conn.cursor() as cur:
@@ -609,50 +598,8 @@ def count_wallets(conn) -> int:
         return cur.fetchone()[0]
 
 
-# ---- Кэш LLM-объяснений ----
-
-def get_alert_explanation(conn, alert_id: int, lang: str, decision_hash: str) -> tuple | None:
-    """Актуальное объяснение: (text, model, generated_at) или None.
-
-    Ключ включает decision_hash — если решение по алерту изменилось, старое
-    объяснение не подходит и будет сгенерировано заново.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT text, model, generated_at FROM alert_explanation "
-            "WHERE alert_id = %s AND lang = %s AND decision_hash = %s",
-            (alert_id, lang, decision_hash),
-        )
-        return cur.fetchone()
-
-
-def save_alert_explanation(conn, *, alert_id: int, lang: str, decision_hash: str,
-                           text: str, model: str) -> None:
-    """Сохранить объяснение (идемпотентно по связке алерт+язык+версия решения)."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO alert_explanation (alert_id, lang, decision_hash, text, model)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (alert_id, lang, decision_hash) DO UPDATE
-                SET text = EXCLUDED.text, model = EXCLUDED.model, generated_at = now()
-            """,
-            (alert_id, lang, decision_hash, text, model),
-        )
-    conn.commit()
-
-
-def delete_alert_explanations(conn, alert_id: int, lang: str | None = None) -> int:
-    """Удалить кэш объяснений алерта (для принудительной перегенерации)."""
-    with conn.cursor() as cur:
-        if lang:
-            cur.execute("DELETE FROM alert_explanation WHERE alert_id=%s AND lang=%s",
-                        (alert_id, lang))
-        else:
-            cur.execute("DELETE FROM alert_explanation WHERE alert_id=%s", (alert_id,))
-        n = cur.rowcount
-    conn.commit()
-    return n
+# Кэш LLM-объяснений и чтение истории скрининга живут в alerts/store.py:
+# это read/write-путь API, и он работает через соединение Django.
 
 
 # ---- Определение контрактов ----

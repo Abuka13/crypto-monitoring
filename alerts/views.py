@@ -352,11 +352,14 @@ def _explain_context(alert: Alert) -> dict:
 @api_view(["POST"])
 def explain_alert_view(request, pk: int):
     """Объяснить решение по алерту человеческим языком (LLM)."""
-    from collector import db as cdb
-    from collector.config import Config as CollectorConfig
+    # Загружаем ТОЛЬКО конфиг LLM: объяснение не обращается к блокчейну, поэтому
+    # отсутствие ETHERSCAN_API_KEY не должно мешать этой функции работать.
+    from collector.config import LLMConfig
     from collector.llm import (
         LLMError, LLMNotConfigured, decision_fingerprint, generate_explanation,
     )
+
+    from . import store
 
     alert = (
         Alert.objects.select_related(
@@ -372,54 +375,45 @@ def explain_alert_view(request, pk: int):
         lang = "ru"
     force = bool(request.data.get("force"))
 
-    try:
-        config = CollectorConfig.load()
-    except Exception as exc:
-        return Response({"detail": f"Ошибка конфигурации: {exc}"},
-                        status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
-
-    if not config.llm.enabled:
+    llm = LLMConfig.load()
+    if not llm.enabled:
         return Response(
-            {"detail": f"LLM не настроена: для провайдера «{config.llm.provider}» "
-                       f"не задан {config.llm.credential_env}. Функция объяснений "
+            {"detail": f"LLM не настроена: для провайдера «{llm.provider}» "
+                       f"не задан {llm.credential_env}. Функция объяснений "
                        f"опциональна — остальная система работает как обычно.",
-             "configured": False, "provider": config.llm.provider},
+             "configured": False, "provider": llm.provider},
             status=http_status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
     context = _explain_context(alert)
     fingerprint = decision_fingerprint(context)
 
-    conn = cdb.connect(config.database_url)
+    if not force:
+        cached = store.get_explanation(alert.id, lang, fingerprint)
+        if cached is not None:
+            text, model, generated_at = cached
+            return Response({
+                "text": text, "lang": lang, "cached": True, "model": model,
+                "provider": llm.provider,
+                "generated_at": generated_at.isoformat(),
+                "risk_level": context["risk_level"], "disclaimer": "llm_generated",
+            })
+
     try:
-        if not force:
-            cached = cdb.get_alert_explanation(conn, alert.id, lang, fingerprint)
-            if cached is not None:
-                text, model, generated_at = cached
-                return Response({
-                    "text": text, "lang": lang, "cached": True, "model": model,
-                    "provider": config.llm.provider,
-                    "generated_at": generated_at.isoformat(),
-                    "risk_level": context["risk_level"], "disclaimer": "llm_generated",
-                })
+        text, model = generate_explanation(context, lang, llm)
+    except LLMNotConfigured as exc:
+        return Response({"detail": str(exc), "configured": False},
+                        status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
+    except LLMError as exc:
+        return Response({"detail": str(exc)},
+                        status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        try:
-            text, model = generate_explanation(context, lang, config.llm)
-        except LLMNotConfigured as exc:
-            return Response({"detail": str(exc), "configured": False},
-                            status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
-        except LLMError as exc:
-            return Response({"detail": str(exc)},
-                            status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
-
-        cdb.save_alert_explanation(conn, alert_id=alert.id, lang=lang,
-                                   decision_hash=fingerprint, text=text, model=model)
-    finally:
-        conn.close()
+    store.save_explanation(alert_id=alert.id, lang=lang, decision_hash=fingerprint,
+                           text=text, model=model)
 
     return Response({
         "text": text, "lang": lang, "cached": False, "model": model,
-        "provider": config.llm.provider,
+        "provider": llm.provider,
         "generated_at": timezone.now().isoformat(),
         # Уровень риска возвращается как есть — LLM его не меняла и не могла.
         "risk_level": context["risk_level"], "disclaimer": "llm_generated",
@@ -487,21 +481,13 @@ def screen_view(request):
 )
 @api_view(["GET"])
 def screen_history_view(request):
-    """История последних проверок (для панели «Недавние» на странице скрининга)."""
-    from collector import db as cdb
-    from collector.config import Config as CollectorConfig
+    """История последних проверок (для панели «Недавние» на странице скрининга).
 
-    try:
-        config = CollectorConfig.load()
-        conn = cdb.connect(config.database_url)
-    except Exception as exc:
-        return Response({"detail": f"Нет доступа к базе: {exc}"},
-                        status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
-    try:
-        rows = cdb.get_recent_screenings(conn, limit=10)
-    finally:
-        conn.close()
+    Только чтение из базы — конфиг сборщика (и ключ Etherscan) здесь не нужен.
+    """
+    from . import store
 
+    rows = store.recent_screenings(limit=10)
     return Response({"results": [
         {
             "address": address,

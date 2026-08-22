@@ -1,0 +1,6 @@
+# Зависимости для тестов и CI (в продакшн-образ не нужны).
+-r requirements.txt
+
+pytest>=8.0
+pytest-django>=4.8      # тестовая БД, фикстуры db/transactional_db
+pytest-env>=1.1         # переменные окружения из pytest.ini
